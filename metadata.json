@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix: Cardápio \u0026 Pedidos Digital10",
+  "description": "Sistema de restaurante completo para visualização de cardápio, gerenciamento de carrinho, checkout de pedidos e painel administrativo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

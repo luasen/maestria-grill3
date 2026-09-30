@@ -1,0 +1,149 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with contact details and saved delivery address",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Firebase Auth UID"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Full name of the user"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Email address of the user"
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Phone / WhatsApp number of the user"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Registration ISO timestamp"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["cliente", "motoboy", "admin", "superadmin"]
+        },
+        "address": {
+          "type": "object",
+          "properties": {
+            "cep": { "type": "string", "maxLength": 15 },
+            "street": { "type": "string", "maxLength": 150 },
+            "number": { "type": "string", "maxLength": 20 },
+            "neighborhood": { "type": "string", "maxLength": 100 },
+            "city": { "type": "string", "maxLength": 100 },
+            "complement": { "type": "string", "maxLength": 100 },
+            "reference": { "type": "string", "maxLength": 150 }
+          }
+        }
+      },
+      "required": ["id", "name", "email", "createdAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Menu category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 50 },
+        "slug": { "type": "string", "maxLength": 50 },
+        "image": { "type": "string" }
+      },
+      "required": ["id", "name", "slug"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "A food or drink menu product",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "price": { "type": "number" },
+        "image": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "price", "categoryId", "active"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string", "maxLength": 100 },
+        "customerPhone": { "type": "string", "maxLength": 20 },
+        "address": { "type": "string" },
+        "complement": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "total": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "tipoPedido": { "type": "string", "enum": ["entrega", "retirada"] },
+        "formaEntrega": { "type": "string" },
+        "endereco": { "type": "object" },
+        "usuario": { "type": "object" },
+        "itens": { "type": "array" },
+        "horarioPedido": { "type": "string" }
+      },
+      "required": ["id", "customerName", "subtotal", "total", "status", "createdAt"]
+    },
+    "RestaurantSettings": {
+      "title": "RestaurantSettings",
+      "description": "Global restaurant metadata settings",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "logoUrl": { "type": "string" },
+        "bannerUrl": { "type": "string" },
+        "deliveryFee": { "type": "number" },
+        "phone": { "type": "string", "maxLength": 20 },
+        "address": { "type": "string" }
+      },
+      "required": ["name", "description"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered customer and staff profiles"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Menu categories"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Menu products list"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer delivery/pickup orders"
+    },
+    "/orders/{orderId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Real-time chat messages between customer, motoboy and restaurant"
+    },
+    "/orders/{orderId}/typing/{userId}": {
+      "schema": "TypingIndicator",
+      "description": "Real-time typing indicator for chat"
+    },
+    "/settings/main": {
+      "schema": "RestaurantSettings",
+      "description": "Global settings for the store"
+    }
+  }
+}

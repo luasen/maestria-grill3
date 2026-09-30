@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net (default deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && 
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin') ||
+         request.auth.token.email == 'maestriagrill@gmail.com');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && 
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' || 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin')) ||
+         request.auth.token.email == 'luansena.010@gmail.com' ||
+         request.auth.token.email == 'maestriagrill@gmail.com');
+    }
+
+    function isMotoboy() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'motoboy';
+    }
+
+    // Collection: Users (PII Protected)
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn();
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // Collection: Health check / connection test
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // Collection: Categories
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin() || (isSignedIn() && !exists(/databases/$(database)/documents/categories/$(categoryId)));
+    }
+
+    // Collection: Products
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin() || (isSignedIn() && !exists(/databases/$(database)/documents/products/$(productId)));
+    }
+
+    // Collection: Orders
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if isAdmin();
+
+      // Subcollection for Order Chat (Client <-> Motoboy <-> Admin)
+      match /messages/{messageId} {
+        allow read: if isAdmin() || 
+                      (isMotoboy() && (
+                        get(/databases/$(database)/documents/orders/$(orderId)).data.motoboyId == request.auth.uid ||
+                        !('motoboyId' in get(/databases/$(database)/documents/orders/$(orderId)).data) ||
+                        get(/databases/$(database)/documents/orders/$(orderId)).data.motoboyId == null
+                      )) || 
+                      (isSignedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.usuario.uid == request.auth.uid);
+        allow create: if isSignedIn() && 
+                      (
+                        isAdmin() || 
+                        (isMotoboy() && get(/databases/$(database)/documents/orders/$(orderId)).data.motoboyId == request.auth.uid) || 
+                        (get(/databases/$(database)/documents/orders/$(orderId)).data.usuario.uid == request.auth.uid)
+                      ) && 
+                      get(/databases/$(database)/documents/orders/$(orderId)).data.status != 'delivered' && 
+                      get(/databases/$(database)/documents/orders/$(orderId)).data.statusEntrega != 'entregue';
+        allow update: if isSignedIn() && 
+                      (
+                        isAdmin() || 
+                        (isMotoboy() && get(/databases/$(database)/documents/orders/$(orderId)).data.motoboyId == request.auth.uid) || 
+                        (get(/databases/$(database)/documents/orders/$(orderId)).data.usuario.uid == request.auth.uid)
+                      );
+      }
+
+      // Subcollection for Typing indicators
+      match /typing/{userId} {
+        allow read: if isAdmin() || 
+                      (isMotoboy() && (
+                        get(/databases/$(database)/documents/orders/$(orderId)).data.motoboyId == request.auth.uid ||
+                        !('motoboyId' in get(/databases/$(database)/documents/orders/$(orderId)).data) ||
+                        get(/databases/$(database)/documents/orders/$(orderId)).data.motoboyId == null
+                      )) || 
+                      (isSignedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.usuario.uid == request.auth.uid);
+        allow write: if isSignedIn() && request.auth.uid == userId &&
+                      (
+                        (get(/databases/$(database)/documents/orders/$(orderId)).data.status != 'delivered' && 
+                         get(/databases/$(database)/documents/orders/$(orderId)).data.statusEntrega != 'entregue') ||
+                        (request.resource != null && request.resource.data.isTyping == false)
+                      );
+      }
+    }
+
+    // Collection: Coupons
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Collection: Banners
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Collection: Settings
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin() || !exists(/databases/$(database)/documents/settings/$(docId));
+    }
+
+    // Collection: Notifications
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Collection: Motoboys
+    match /motoboys/{motoboyId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Collection: OrderHistory
+    match /orderHistory/{historyId} {
+      allow read: if isAdmin() || 
+                    (isSignedIn() && (
+                      (resource == null) ||
+                      (resource.data.usuario.uid == request.auth.uid) || 
+                      (resource.data.motoboyId == request.auth.uid)
+                    ));
+      allow write: if isAdmin() || isMotoboy();
+    }
+
+    // Collection: SystemLogs
+    match /systemLogs/{logId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
