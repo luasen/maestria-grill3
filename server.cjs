@@ -24,6 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 // server.ts
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
+var import_fs = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_vite = require("vite");
 var import_mercadopago = require("mercadopago");
@@ -77,8 +78,40 @@ async function startServer() {
     }
     next();
   });
-  app.use(import_express.default.json());
-  app.use(import_express.default.urlencoded({ extended: true }));
+  app.use(import_express.default.json({ limit: "25mb" }));
+  app.use(import_express.default.urlencoded({ extended: true, limit: "25mb" }));
+  const UPLOADS_DIR = import_path.default.resolve(process.cwd(), "uploads");
+  if (!import_fs.default.existsSync(UPLOADS_DIR)) {
+    import_fs.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+  app.use("/api/storage/files", import_express.default.static(UPLOADS_DIR, {
+    maxAge: "1y",
+    immutable: true
+  }));
+  app.post("/api/storage/upload", async (req, res) => {
+    try {
+      const { bucket, fileName, base64Data } = req.body;
+      if (!bucket || !fileName || !base64Data) {
+        return res.status(400).json({ error: "Par\xE2metros incompletos para upload" });
+      }
+      const safeBucket = String(bucket).replace(/[^a-zA-Z0-9_-]/g, "");
+      const safeFileName = String(fileName).replace(/[^a-zA-Z0-9_.-]/g, "");
+      const targetDir = import_path.default.join(UPLOADS_DIR, safeBucket);
+      if (!import_fs.default.existsSync(targetDir)) {
+        import_fs.default.mkdirSync(targetDir, { recursive: true });
+      }
+      const filePath = import_path.default.join(targetDir, safeFileName);
+      const cleanBase64 = String(base64Data).replace(/^data:[^;]+;base64,/, "");
+      const buffer = Buffer.from(cleanBase64, "base64");
+      import_fs.default.writeFileSync(filePath, buffer);
+      const publicUrl = `/api/storage/files/${safeBucket}/${safeFileName}`;
+      console.log(`[Storage Fallback] Imagem gravada com sucesso em ${publicUrl}`);
+      return res.json({ publicUrl, success: true });
+    } catch (err) {
+      console.error("[Storage Fallback Error]:", err);
+      return res.status(500).json({ error: err?.message || "Falha ao salvar imagem" });
+    }
+  });
   app.post("/api/database/seed", async (req, res) => {
     try {
       const settingsRef = (0, import_firestore.doc)(db, "settings", "main");
