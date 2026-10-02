@@ -12,7 +12,7 @@ import { fetchApi } from '../utils/api';
 
 export default function Checkout() {
   const { cart, subtotal, deliveryFee, clearCart } = useCart();
-  const { createOrder, settings, setActiveView, updateSettings } = useApp();
+  const { createOrder, updateOrder, settings, setActiveView, updateSettings } = useApp();
   const { user, profile, loading: authLoading, updateUserAddress, setIsAuthOpen } = useAuth();
 
   // Profile data sync
@@ -979,12 +979,25 @@ export default function Checkout() {
                     price: item.price,
                   }))}
                   deliveryFee={finalDeliveryFee}
-                  onSuccess={(result) => {
+                  onSuccess={async (result) => {
+                    try {
+                      await updateOrder(pendingOrder.id, {
+                        paymentStatus: 'paid',
+                        statusPagamento: 'pago',
+                        status: 'pending',
+                        paidAt: new Date().toISOString(),
+                        mercadopagoPaymentId: result?.id ? String(result.id) : (result?.paymentId ? String(result.paymentId) : undefined),
+                        mercadopagoStatus: 'approved',
+                      });
+                    } catch (err) {
+                      console.error('Erro ao atualizar status do pedido após pagamento:', err);
+                    }
                     setPlacedOrder({
                       ...pendingOrder,
                       paymentStatus: 'paid',
                       statusPagamento: 'pago',
                       status: 'pending',
+                      paidAt: new Date().toISOString(),
                     });
                     clearCart();
                   }}

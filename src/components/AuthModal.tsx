@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { isSupabaseConfigured } from '../services/supabase';
-import SupabaseConfigModal from './SupabaseConfigModal';
-import { Mail, Lock, User, Phone, X, AlertCircle, ArrowLeft, LogOut, CheckCircle, Chrome, Database, Settings } from 'lucide-react';
+import { Mail, Lock, User, Phone, X, AlertCircle, ArrowLeft, LogOut, CheckCircle, Chrome } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AuthModalProps {
@@ -27,7 +25,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
   const [error, setError] = useState<React.ReactNode | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -55,7 +52,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
         setError(
           <div className="flex flex-col gap-1 text-left text-xs">
             <span className="font-bold text-amber-800">⚠️ Confirmação de E-mail Pendente:</span>
-            <span>Seu e-mail ainda não foi confirmado no Supabase. Verifique sua caixa de entrada ou desative a confirmação de e-mail em Supabase &gt; Authentication &gt; Providers &gt; Email.</span>
+            <span>Seu e-mail ainda não foi confirmado. Por favor, verifique sua caixa de entrada para ativar sua conta antes de entrar.</span>
           </div>
         );
       } else {
@@ -78,29 +75,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
         onClose();
       }, 1500);
     } catch (err: any) {
-      if (!isSupabaseConfigured) {
-        setError(
-          <div className="flex flex-col gap-2 text-left text-xs">
-            <span className="font-bold text-amber-800 flex items-center gap-1.5">
-              <Database className="h-4 w-4 text-emerald-600" />
-              Configure seu Supabase para ativar o Google OAuth:
-            </span>
-            <p className="text-gray-600 text-[11px]">
-              Para utilizar o login com Google via Supabase, informe a URL e a Anon Key do seu projeto.
-            </p>
-            <button
-              type="button"
-              onClick={() => setIsSupabaseModalOpen(true)}
-              className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 text-white font-bold py-2 px-3 text-xs hover:bg-emerald-700 transition"
-            >
-              <Settings className="h-3.5 w-3.5" />
-              Configurar Supabase Agora
-            </button>
-          </div>
-        );
-      } else {
-        setError(err?.message || 'Falha ao iniciar login com o Google no Supabase.');
-      }
+      setError(err?.message || 'Falha ao iniciar login com o Google.');
     } finally {
       setLoading(false);
     }
@@ -185,22 +160,8 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             className="relative w-full max-w-md rounded-3xl border border-white/40 bg-white/95 p-6 shadow-2xl backdrop-blur-md text-left my-8"
           >
-            {/* Supabase Status Pill & Close Button */}
-            <div className="absolute right-4 top-4 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsSupabaseModalOpen(true)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[10px] font-bold border transition ${
-                  isSupabaseConfigured
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                }`}
-                title="Configurar Supabase"
-              >
-                <Database className="h-3 w-3" />
-                <span>{isSupabaseConfigured ? 'Supabase Conectado' : 'Configurar Supabase'}</span>
-              </button>
-
+            {/* Close Button */}
+            <div className="absolute right-4 top-4 flex items-center">
               <button
                 onClick={onClose}
                 id="btn-close-auth-modal"
@@ -504,12 +465,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
           </motion.div>
         </div>
       </div>
-
-      {/* Supabase Configuration Modal */}
-      <SupabaseConfigModal
-        isOpen={isSupabaseModalOpen}
-        onClose={() => setIsSupabaseModalOpen(false)}
-      />
     </>
   );
 }

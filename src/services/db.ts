@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from './supabase';
 import { Category, Product, Order, RestaurantSettings, UserProfile } from '../types';
+import { deleteImageFromStorage } from './imageService';
 // @ts-ignore
 import restaurantBanner from '../assets/images/restaurant_banner_1783985102418.jpg';
 
@@ -296,6 +297,13 @@ export const dbService = {
     }
 
     const current = getLocalItem<Category[]>(LOCAL_STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
+    const existing = current.find(c => c.id === id);
+
+    // If image changed, clean up the previous image from category-images bucket
+    if (image !== undefined && existing?.image && image !== existing.image) {
+      deleteImageFromStorage(existing.image, 'category-images').catch(() => {});
+    }
+
     setLocalItem(LOCAL_STORAGE_KEYS.CATEGORIES, current.map(c => c.id === id ? { ...c, ...updatedCategory } : c));
 
     if (isSupabaseConfigured) {
@@ -310,6 +318,13 @@ export const dbService = {
 
   async deleteCategory(id: string): Promise<boolean> {
     const current = getLocalItem<Category[]>(LOCAL_STORAGE_KEYS.CATEGORIES, INITIAL_CATEGORIES);
+    const existing = current.find(c => c.id === id);
+
+    // Remove category image from Storage
+    if (existing?.image) {
+      deleteImageFromStorage(existing.image, 'category-images').catch(() => {});
+    }
+
     setLocalItem(LOCAL_STORAGE_KEYS.CATEGORIES, current.filter(c => c.id !== id));
 
     if (isSupabaseConfigured) {
@@ -407,6 +422,12 @@ export const dbService = {
       categoryId: '',
       active: true,
     };
+
+    // If image changed, clean up previous image from product-images bucket
+    if (updatedProduct.image && existing.image && updatedProduct.image !== existing.image) {
+      deleteImageFromStorage(existing.image, 'product-images').catch(() => {});
+    }
+
     const merged: Product = { ...existing, ...updatedProduct };
     setLocalItem(LOCAL_STORAGE_KEYS.PRODUCTS, current.map(p => p.id === id ? merged : p));
 
@@ -429,6 +450,13 @@ export const dbService = {
 
   async deleteProduct(id: string): Promise<boolean> {
     const current = getLocalItem<Product[]>(LOCAL_STORAGE_KEYS.PRODUCTS, INITIAL_PRODUCTS);
+    const existing = current.find(p => p.id === id);
+
+    // Remove product image from Storage
+    if (existing?.image) {
+      deleteImageFromStorage(existing.image, 'product-images').catch(() => {});
+    }
+
     setLocalItem(LOCAL_STORAGE_KEYS.PRODUCTS, current.filter(p => p.id !== id));
 
     if (isSupabaseConfigured) {
@@ -492,12 +520,12 @@ export const dbService = {
     return orders;
   },
 
-  async createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'status'>): Promise<Order> {
+  async createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'status'> & { status?: Order['status'] }): Promise<Order> {
     const id = `PED-${Math.floor(100000 + Math.random() * 900000)}`;
     const newOrder: Order = {
       ...orderData,
       id,
-      status: 'pending',
+      status: orderData.status || 'pending',
       createdAt: new Date().toISOString(),
     };
 
@@ -506,7 +534,7 @@ export const dbService = {
 
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('orders').insert({
+        const payload: any = {
           id: newOrder.id,
           customer_name: newOrder.customerName,
           customer_phone: newOrder.customerPhone,
@@ -527,9 +555,16 @@ export const dbService = {
           horario_pedido: newOrder.horarioPedido,
           cupom: newOrder.cupom,
           desconto: newOrder.desconto,
-        });
-      } catch (err) {
-        console.warn('Error creating order in Supabase:', err);
+        };
+
+        const { error } = await supabase.from('orders').insert(payload);
+        if (error) {
+          console.error('[Supabase createOrder Error]:', error);
+          throw new Error(`Erro ao gravar pedido no Supabase: ${error.message || error.details}`);
+        }
+      } catch (err: any) {
+        console.error('Error creating order in Supabase:', err);
+        throw err;
       }
     }
     return newOrder;
@@ -585,9 +620,12 @@ export const dbService = {
         if (fields.motoboyId !== undefined) sbUpdates.motoboy_id = fields.motoboyId;
         if (fields.mercadopagoPaymentId !== undefined) sbUpdates.mercadopago_payment_id = fields.mercadopagoPaymentId;
         if (fields.mercadopagoStatus !== undefined) sbUpdates.mercadopago_status = fields.mercadopagoStatus;
-        await supabase.from('orders').update(sbUpdates).eq('id', id);
+        const { error } = await supabase.from('orders').update(sbUpdates).eq('id', id);
+        if (error) {
+          console.error('[Supabase updateOrder Error]:', error);
+        }
       } catch (err) {
-        console.warn('Error updating order in Supabase:', err);
+        console.error('Error updating order in Supabase:', err);
       }
     }
     return updatedOrder;
@@ -622,6 +660,14 @@ export const dbService = {
   },
 
   async saveSettings(settings: RestaurantSettings): Promise<RestaurantSettings> {
+    const prev = getLocalItem<RestaurantSettings>(LOCAL_STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    if (prev.bannerUrl && settings.bannerUrl && prev.bannerUrl !== settings.bannerUrl) {
+      deleteImageFromStorage(prev.bannerUrl, 'restaurant-images').catch(() => {});
+    }
+    if (prev.logoUrl && settings.logoUrl && prev.logoUrl !== settings.logoUrl) {
+      deleteImageFromStorage(prev.logoUrl, 'restaurant-images').catch(() => {});
+    }
+
     setLocalItem(LOCAL_STORAGE_KEYS.SETTINGS, settings);
     if (isSupabaseConfigured) {
       try {

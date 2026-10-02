@@ -24,7 +24,7 @@ interface AppContextType {
   addCategory: (name: string, image?: string) => Promise<Category>;
   updateCategory: (id: string, name: string, image?: string) => Promise<Category>;
   deleteCategory: (id: string) => Promise<boolean>;
-  createOrder: (orderData: Omit<Order, 'id' | 'createdAt' | 'status'>) => Promise<Order>;
+  createOrder: (orderData: Omit<Order, 'id' | 'createdAt' | 'status'> & { status?: Order['status'] }) => Promise<Order>;
   updateOrderStatus: (id: string, status: Order['status']) => Promise<Order>;
   updateOrder: (id: string, updatedFields: Partial<Order>) => Promise<Order>;
   updateSettings: (settings: RestaurantSettings) => Promise<RestaurantSettings>;
@@ -191,7 +191,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return success;
   };
 
-  const handleCreateOrder = async (orderData: Omit<Order, 'id' | 'createdAt' | 'status'>) => {
+  const handleCreateOrder = async (orderData: Omit<Order, 'id' | 'createdAt' | 'status'> & { status?: Order['status'] }) => {
     const newOrder = await dbService.createOrder(orderData);
     setOrders((prev) => [newOrder, ...prev]);
     return newOrder;

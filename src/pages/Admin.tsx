@@ -38,21 +38,20 @@ import {
   MessageSquare,
   X,
   AlertCircle,
-  Database
+  RotateCw
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Product, Category, RestaurantSettings, OrderStatus, Order, UserProfile } from '../types';
 import { formatPrice, formatDate } from '../utils';
 import { updateThemeColors } from '../utils/theme';
-import { isSupabaseConfigured } from '../services/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 // @ts-ignore
 import restaurantBanner from '../assets/images/restaurant_banner_1783985102418.jpg';
 import OrderChatModal from '../components/OrderChatModal';
 import ChatButtonWithBadge from '../components/ChatButtonWithBadge';
 import AdminChatDashboard from '../components/AdminChatDashboard';
-import SupabaseConfigModal from '../components/SupabaseConfigModal';
+import ImageUploader from '../components/ImageUploader';
 import { ConfirmationModal } from '../components/ConfirmationModal';
 
 type AdminTab = 'orders' | 'products' | 'categories' | 'settings' | 'employees' | 'systemSettings' | 'chats';
@@ -75,12 +74,12 @@ export default function Admin() {
     getUsers,
     updateUserProfile,
     setActiveView,
+    refreshData,
   } = useApp();
 
   const { user, profile, loading, setIsAuthOpen } = useAuth();
   const [activeTab, setActiveTab] = useState<AdminTab>('orders');
   const [selectedChatOrder, setSelectedChatOrder] = useState<any | null>(null);
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [confirmStatusModal, setConfirmStatusModal] = useState<{
     isOpen: boolean;
     orderId: string;
@@ -186,17 +185,11 @@ export default function Admin() {
   const [selectedOrderStatusFilter, setSelectedOrderStatusFilter] = useState<string>('all');
   const [refusingOrderId, setRefusingOrderId] = useState<string | null>(null);
   const [refusalReason, setRefusalReason] = useState('');
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
 
   const activeOrders = orders.filter((order) => {
-    // Hide online Mercado Pago orders that are awaiting payment or unpaid
+    // Only hide orders that are strictly in awaiting_payment (customer is still on payment checkout screen)
     if (order.status === 'awaiting_payment') return false;
-    if (
-      order.paymentMethod === 'mercadopago' &&
-      order.paymentStatus !== 'paid' &&
-      order.statusPagamento !== 'pago'
-    ) {
-      return false;
-    }
     return true;
   });
 
@@ -617,19 +610,6 @@ export default function Admin() {
             <p className="text-[10px] text-orange-600 font-bold uppercase tracking-wider">Fase 1 (MVP) &bull; Demonstração</p>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsSupabaseModalOpen(true)}
-              className={`flex h-9 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold border transition ${
-                isSupabaseConfigured
-                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 hover:bg-emerald-500/20'
-                  : 'bg-amber-500/10 border-amber-500/20 text-amber-700 hover:bg-amber-500/20'
-              }`}
-              title="Configurar Banco de Dados e Auth Supabase"
-            >
-              <Database className="h-3.5 w-3.5" />
-              {isSupabaseConfigured ? 'Supabase Conectado' : 'Configurar Supabase'}
-            </button>
             <span className="flex h-9 items-center gap-1.5 rounded-full bg-orange-500/10 border border-orange-500/15 px-2.5 py-0.5 text-[10px] font-bold text-orange-600">
               <Sparkles className="h-3.5 w-3.5" />
               Admin Ativo
@@ -749,22 +729,39 @@ export default function Admin() {
               exit={{ opacity: 0, y: -10 }}
               className="flex flex-col gap-4"
             >
-              {/* Order Status Filters */}
-              <div className="overflow-x-auto flex gap-1.5 pb-2 scrollbar-none">
-                {['all', 'pending', 'preparing', 'ready', 'delivered'].map((f) => (
-                  <button
-                    key={f}
-                    id={`filter-order-${f}`}
-                    onClick={() => setSelectedOrderStatusFilter(f)}
-                    className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
-                      selectedOrderStatusFilter === f
-                        ? 'bg-gray-950 text-white'
-                        : 'bg-white/40 border border-white/30 text-gray-600 hover:bg-white/60'
-                    }`}
-                  >
-                    {f === 'all' ? 'Todos' : getStatusLabel(f as OrderStatus)}
-                  </button>
-                ))}
+              {/* Order Status Filters & Instant Refresh */}
+              <div className="flex items-center justify-between gap-2 pb-2">
+                <div className="overflow-x-auto flex gap-1.5 scrollbar-none flex-1">
+                  {['all', 'pending', 'preparing', 'ready', 'delivered'].map((f) => (
+                    <button
+                      key={f}
+                      id={`filter-order-${f}`}
+                      onClick={() => setSelectedOrderStatusFilter(f)}
+                      className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
+                        selectedOrderStatusFilter === f
+                          ? 'bg-gray-950 text-white'
+                          : 'bg-white/40 border border-white/30 text-gray-600 hover:bg-white/60'
+                      }`}
+                    >
+                      {f === 'all' ? 'Todos' : getStatusLabel(f as OrderStatus)}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsRefreshingOrders(true);
+                    await refreshData();
+                    setTimeout(() => setIsRefreshingOrders(false), 600);
+                  }}
+                  disabled={isRefreshingOrders}
+                  title="Atualizar lista de pedidos agora"
+                  className="flex-shrink-0 rounded-full px-2.5 py-1.5 text-[10px] font-bold bg-white/50 border border-white/40 text-gray-700 hover:bg-white/80 transition flex items-center gap-1.5 shadow-2xs"
+                >
+                  <RotateCw className={`h-3 w-3 text-orange-600 ${isRefreshingOrders ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Atualizar</span>
+                </button>
               </div>
 
               {filteredOrders.length === 0 ? (
@@ -1258,14 +1255,12 @@ export default function Admin() {
                     </div>
 
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">URL da Foto</label>
-                      <input
-                        type="url"
-                        id="form-prod-image"
+                      <ImageUploader
+                        label="Foto do Produto"
                         value={prodImage}
-                        onChange={(e) => setProdImage(e.target.value)}
-                        placeholder="https://images.unsplash.com/..."
-                        className="w-full rounded-xl border border-white/30 bg-white/45 py-2.5 px-3.5 text-xs text-gray-800 outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10"
+                        onChange={(url) => setProdImage(url)}
+                        bucket="product-images"
+                        required
                       />
                     </div>
 
@@ -1411,20 +1406,17 @@ export default function Admin() {
                       />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                      <label htmlFor="form-cat-image" className="text-[10px] font-bold uppercase tracking-wider text-gray-500">URL da Imagem (Opcional)</label>
-                      <input
-                        type="url"
-                        id="form-cat-image"
+                      <ImageUploader
+                        label="Foto da Categoria"
                         value={editingCategory ? editingCatImage : newCatImage}
-                        onChange={(e) => {
+                        onChange={(url) => {
                           if (editingCategory) {
-                            setEditingCatImage(e.target.value);
+                            setEditingCatImage(url);
                           } else {
-                            setNewCatImage(e.target.value);
+                            setNewCatImage(url);
                           }
                         }}
-                        placeholder="https://images.unsplash.com/..."
-                        className="rounded-xl border border-white/30 bg-white/45 py-2.5 px-3.5 text-xs text-gray-800 outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10"
+                        bucket="category-images"
                       />
                     </div>
                   </div>
@@ -1599,23 +1591,11 @@ export default function Admin() {
                   </div>
 
                   <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">URL da Imagem Banner</label>
-                      <button
-                        type="button"
-                        onClick={() => setSettingsBanner(restaurantBanner)}
-                        className="text-[9px] text-orange-600 hover:text-orange-700 font-bold uppercase transition"
-                      >
-                        Restaurar Padrão
-                      </button>
-                    </div>
-                    <input
-                      type="url"
-                      id="form-settings-banner"
+                    <ImageUploader
+                      label="Imagem do Banner"
                       value={settingsBanner}
-                      onChange={(e) => setSettingsBanner(e.target.value)}
-                      placeholder="https://images.unsplash.com/..."
-                      className="w-full rounded-xl border border-white/30 bg-white/45 py-2.5 px-3.5 text-xs text-gray-800 outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10"
+                      onChange={(url) => setSettingsBanner(url)}
+                      bucket="restaurant-images"
                     />
                   </div>
 
@@ -3150,11 +3130,6 @@ export default function Admin() {
           onCancel={() => setConfirmStatusModal(null)}
         />
       )}
-
-      <SupabaseConfigModal
-        isOpen={isSupabaseModalOpen}
-        onClose={() => setIsSupabaseModalOpen(false)}
-      />
     </div>
   );
 }
