@@ -471,40 +471,66 @@ export const dbService = {
 
   // --- ORDERS ---
   async getOrders(): Promise<Order[]> {
+    const DELIVERY_RANK: Record<string, number> = {
+      'aceito': 1,
+      'retirado': 2,
+      'a_caminho': 3,
+      'entregue': 4,
+    };
+
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
         if (!error && data) {
-          const list = data.map((o: any) => ({
-            id: o.id,
-            customerName: o.customer_name,
-            customerPhone: o.customer_phone,
-            customerEmail: o.customer_email,
-            address: o.address,
-            complement: o.complement,
-            paymentMethod: o.payment_method,
-            paymentStatus: o.payment_status,
-            status: o.status,
-            subtotal: Number(o.subtotal || 0),
-            deliveryFee: Number(o.delivery_fee || 0),
-            total: Number(o.total || 0),
-            valorProdutos: Number(o.subtotal || 0),
-            taxaEntrega: Number(o.delivery_fee || 0),
-            valorTotal: Number(o.total || 0),
-            tipoPedido: o.tipo_pedido,
-            formaEntrega: o.forma_entrega,
-            endereco: o.endereco,
-            items: o.items || [],
-            itens: o.items || [],
-            usuario: o.user_id ? { uid: o.user_id, email: o.customer_email } : undefined,
-            horarioPedido: o.horario_pedido || o.created_at,
-            createdAt: o.created_at,
-            cupom: o.cupom,
-            desconto: o.desconto ? Number(o.desconto) : undefined,
-            motoboyId: o.motoboy_id,
-            mercadopagoPaymentId: o.mercadopago_payment_id,
-            mercadopagoStatus: o.mercadopago_status,
-          })) as unknown as Order[];
+          const localOrders = getLocalItem<Order[]>(LOCAL_STORAGE_KEYS.ORDERS, []);
+          const localMap = new Map<string, Order>(localOrders.map(o => [o.id, o]));
+
+          const list = data.map((o: any) => {
+            const rawEndereco = o.endereco;
+            const statusEntregaFromDb = o.status_entrega || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.statusEntrega : undefined);
+            const localOrder = localMap.get(o.id);
+            const localStatusEntrega = localOrder?.statusEntrega;
+
+            // Monotonic resolution: higher progression rank wins to prevent stale overwrites
+            let finalStatusEntrega = statusEntregaFromDb || localStatusEntrega;
+            if (statusEntregaFromDb && localStatusEntrega) {
+              const dbRank = DELIVERY_RANK[statusEntregaFromDb] || 0;
+              const localRank = DELIVERY_RANK[localStatusEntrega] || 0;
+              finalStatusEntrega = localRank > dbRank ? localStatusEntrega : statusEntregaFromDb;
+            }
+
+            return {
+              id: o.id,
+              customerName: o.customer_name,
+              customerPhone: o.customer_phone,
+              customerEmail: o.customer_email,
+              address: o.address,
+              complement: o.complement,
+              paymentMethod: o.payment_method,
+              paymentStatus: o.payment_status,
+              status: o.status,
+              subtotal: Number(o.subtotal || 0),
+              deliveryFee: Number(o.delivery_fee || 0),
+              total: Number(o.total || 0),
+              valorProdutos: Number(o.subtotal || 0),
+              taxaEntrega: Number(o.delivery_fee || 0),
+              valorTotal: Number(o.total || 0),
+              tipoPedido: o.tipo_pedido,
+              formaEntrega: o.forma_entrega,
+              endereco: rawEndereco,
+              statusEntrega: finalStatusEntrega,
+              items: o.items || [],
+              itens: o.items || [],
+              usuario: o.user_id ? { uid: o.user_id, email: o.customer_email } : undefined,
+              horarioPedido: o.horario_pedido || o.created_at,
+              createdAt: o.created_at,
+              cupom: o.cupom,
+              desconto: o.desconto ? Number(o.desconto) : undefined,
+              motoboyId: o.motoboy_id || localOrder?.motoboyId,
+              mercadopagoPaymentId: o.mercadopago_payment_id,
+              mercadopagoStatus: o.mercadopago_status,
+            };
+          }) as unknown as Order[];
           setLocalItem(LOCAL_STORAGE_KEYS.ORDERS, list);
           return list;
         }
@@ -581,6 +607,9 @@ export const dbService = {
       updates.paidAt = new Date().toISOString();
     }
     const updatedOrder: Order = existing ? { ...existing, ...updates } : ({ id, status, createdAt: new Date().toISOString() } as any);
+    if (updates.statusEntrega && typeof updatedOrder.endereco === 'object' && updatedOrder.endereco !== null) {
+      updatedOrder.endereco = { ...updatedOrder.endereco, statusEntrega: updates.statusEntrega };
+    }
     setLocalItem(LOCAL_STORAGE_KEYS.ORDERS, current.map(o => o.id === id ? updatedOrder : o));
 
     if (isSupabaseConfigured) {
@@ -588,6 +617,9 @@ export const dbService = {
         const sbUpdates: any = { status };
         if (status === 'delivered') {
           sbUpdates.payment_status = 'paid';
+          if (updatedOrder.endereco) {
+            sbUpdates.endereco = updatedOrder.endereco;
+          }
         }
         await supabase.from('orders').update(sbUpdates).eq('id', id);
       } catch (err) {
@@ -610,6 +642,16 @@ export const dbService = {
     const current = getLocalItem<Order[]>(LOCAL_STORAGE_KEYS.ORDERS, []);
     const existing = current.find(o => o.id === id);
     const updatedOrder: Order = existing ? { ...existing, ...fields } : ({ id, ...fields, createdAt: new Date().toISOString() } as any);
+
+    // Persist statusEntrega into endereco JSONB (guaranteed to exist in PostgreSQL)
+    if (fields.statusEntrega !== undefined) {
+      const currentEndereco = typeof updatedOrder.endereco === 'object' && updatedOrder.endereco !== null ? updatedOrder.endereco : {};
+      updatedOrder.endereco = {
+        ...currentEndereco,
+        statusEntrega: fields.statusEntrega,
+      } as any;
+    }
+
     setLocalItem(LOCAL_STORAGE_KEYS.ORDERS, current.map(o => o.id === id ? updatedOrder : o));
 
     if (isSupabaseConfigured) {
@@ -620,8 +662,23 @@ export const dbService = {
         if (fields.motoboyId !== undefined) sbUpdates.motoboy_id = fields.motoboyId;
         if (fields.mercadopagoPaymentId !== undefined) sbUpdates.mercadopago_payment_id = fields.mercadopagoPaymentId;
         if (fields.mercadopagoStatus !== undefined) sbUpdates.mercadopago_status = fields.mercadopagoStatus;
-        const { error } = await supabase.from('orders').update(sbUpdates).eq('id', id);
-        if (error) {
+        if (fields.statusEntrega !== undefined && updatedOrder.endereco) {
+          sbUpdates.endereco = updatedOrder.endereco;
+        }
+
+        // Try updating including status_entrega column if available in DB schema
+        let { error } = await supabase.from('orders').update({
+          ...sbUpdates,
+          ...(fields.statusEntrega !== undefined ? { status_entrega: fields.statusEntrega } : {})
+        }).eq('id', id);
+
+        if (error && error.message?.includes('status_entrega')) {
+          // If status_entrega column does not exist yet in schema, update with endereco JSONB
+          const { error: fallbackErr } = await supabase.from('orders').update(sbUpdates).eq('id', id);
+          if (fallbackErr) {
+            console.error('[Supabase updateOrder Fallback Error]:', fallbackErr);
+          }
+        } else if (error) {
           console.error('[Supabase updateOrder Error]:', error);
         }
       } catch (err) {

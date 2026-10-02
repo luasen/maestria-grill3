@@ -345,9 +345,11 @@ export default function Motoboy() {
 
                     {/* Middle Info */}
                     <div className="flex flex-col gap-2.5 text-xs">
-                      <div>
-                        <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cliente</span>
-                        <span className="font-bold text-gray-800 text-sm mt-0.5 block">{order.customerName}</span>
+                      <div className="flex items-center justify-between text-xs bg-gray-50/80 px-3 py-2 rounded-2xl border border-gray-100">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cliente & Contato</span>
+                        <span className="text-[10px] font-bold text-gray-500 bg-white px-2 py-0.5 rounded-lg border border-gray-200">
+                          🔒 Liberado após aceitar
+                        </span>
                       </div>
 
                       <div className="flex items-start gap-1.5 bg-gray-50 p-2.5 rounded-2xl">
@@ -543,14 +545,19 @@ export default function Motoboy() {
                       <div className="border-t border-b border-gray-50 py-3 my-1">
                         <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-2">Itens do Pedido</span>
                         <div className="flex flex-col gap-2 max-h-32 overflow-y-auto">
-                          {(order.itens || order.items || []).map((item, idx) => (
-                            <div key={idx} className="flex justify-between text-xs text-gray-600">
-                              <span className="font-semibold text-gray-800">
-                                {item.quantity}x <span className="font-medium text-gray-600">{item.productName}</span>
-                              </span>
-                              <span className="font-bold text-gray-700">{formatPrice(item.price * item.quantity)}</span>
-                            </div>
-                          ))}
+                          {(order.itens || order.items || []).map((item: any, idx: number) => {
+                            const productName = item.productName || item.name || item.nome || 'Produto';
+                            const qty = item.quantity || item.qtd || 1;
+                            const itemPrice = item.price || item.preco || 0;
+                            return (
+                              <div key={idx} className="flex justify-between text-xs text-gray-600">
+                                <span className="font-semibold text-gray-800">
+                                  {qty}x <span className="font-medium text-gray-700">{productName}</span>
+                                </span>
+                                <span className="font-bold text-gray-700">{formatPrice(itemPrice * qty)}</span>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
@@ -565,9 +572,19 @@ export default function Motoboy() {
                           </span>
                         </div>
                         <div className="text-right">
-                          <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Pagamento</span>
+                          <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Status do Pagamento</span>
                           <span className="text-xs font-bold text-orange-600 uppercase mt-0.5 block">
-                            {order.paymentMethod === 'pix' ? '🔥 Pix Online' : order.paymentMethod === 'card' ? '💳 Cartão na Entrega' : '💵 Dinheiro'}
+                            {order.paymentStatus === 'paid' || order.statusPagamento === 'pago' ? (
+                              <span className="text-emerald-600 font-extrabold flex items-center gap-1 justify-end">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Pedido Pago Online
+                              </span>
+                            ) : order.paymentMethod === 'pix' ? (
+                              '🔥 Pix Online'
+                            ) : order.paymentMethod === 'card' ? (
+                              '💳 Cartão na Entrega'
+                            ) : (
+                              '💵 Dinheiro na Entrega'
+                            )}
                           </span>
                         </div>
                       </div>

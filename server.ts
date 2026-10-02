@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { MercadoPagoConfig, Payment, Preference } from 'mercadopago';
@@ -56,8 +57,49 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+
+  // Ensure uploads directory exists for resilient image storage
+  const UPLOADS_DIR = path.resolve(process.cwd(), 'uploads');
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+
+  // Serve static uploaded files
+  app.use('/api/storage/files', express.static(UPLOADS_DIR, {
+    maxAge: '1y',
+    immutable: true
+  }));
+
+  // Fallback upload endpoint when Supabase Storage bucket is not yet created
+  app.post('/api/storage/upload', async (req, res) => {
+    try {
+      const { bucket, fileName, base64Data } = req.body;
+      if (!bucket || !fileName || !base64Data) {
+        return res.status(400).json({ error: 'Parâmetros incompletos para upload' });
+      }
+
+      const safeBucket = String(bucket).replace(/[^a-zA-Z0-9_-]/g, '');
+      const safeFileName = String(fileName).replace(/[^a-zA-Z0-9_.-]/g, '');
+      const targetDir = path.join(UPLOADS_DIR, safeBucket);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+
+      const filePath = path.join(targetDir, safeFileName);
+      const cleanBase64 = String(base64Data).replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(cleanBase64, 'base64');
+      fs.writeFileSync(filePath, buffer);
+
+      const publicUrl = `/api/storage/files/${safeBucket}/${safeFileName}`;
+      console.log(`[Storage Fallback] Imagem gravada com sucesso em ${publicUrl}`);
+      return res.json({ publicUrl, success: true });
+    } catch (err: any) {
+      console.error('[Storage Fallback Error]:', err);
+      return res.status(500).json({ error: err?.message || 'Falha ao salvar imagem' });
+    }
+  });
 
   // Seed initial Firestore collections and default configs if empty
   app.post('/api/database/seed', async (req, res) => {

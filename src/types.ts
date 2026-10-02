@@ -32,6 +32,7 @@ export interface Address {
   city: string;
   complement?: string;
   reference?: string;
+  statusEntrega?: string;
 }
 
 export interface UserProfile {

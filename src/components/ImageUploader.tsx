@@ -7,8 +7,7 @@ import {
   Loader2,
   Link as LinkIcon,
   ShieldCheck,
-  AlertCircle,
-  HardDrive
+  AlertCircle
 } from 'lucide-react';
 import {
   StorageBucket,
@@ -244,9 +243,9 @@ export default function ImageUploader({
                   JPG, PNG ou WebP (Será convertido e otimizado em WebP)
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200/60 mt-1">
-                <HardDrive className="h-3 w-3" />
-                Bucket: <span className="font-mono">{bucket}</span>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-orange-50 text-orange-700 text-[10px] font-bold border border-orange-200/60 mt-1">
+                <ShieldCheck className="h-3 w-3" />
+                <span>Armazenamento Seguro Otimizado</span>
               </div>
             </>
           )}

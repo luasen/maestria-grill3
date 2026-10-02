@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
     items JSONB NOT NULL,
     user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
     motoboy_id TEXT,
+    status_entrega TEXT,
     horario_pedido TEXT,
     cupom TEXT,
     desconto NUMERIC(10,2),
@@ -143,3 +144,105 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.settings (id, name, description, delivery_fee, phone, address, whatsapp, email) VALUES
 ('main', 'Maestria Grill', 'O autêntico sabor da brasa com carnes nobres grelhadas com perfeição e paixão em servir.', 7.00, '(11) 99999-8888', 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP', '(11) 99999-8888', 'contato@maestriagrill.com.br')
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================
+-- SUPABASE STORAGE: BUCKETS E POLÍTICAS DE SEGURANÇA (RLS)
+-- ============================================================
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES 
+  ('product-images', 'product-images', true, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif']),
+  ('category-images', 'category-images', true, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif']),
+  ('restaurant-images', 'restaurant-images', true, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'])
+ON CONFLICT (id) DO UPDATE SET 
+  public = true,
+  file_size_limit = 10485760,
+  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/gif'];
+
+DROP POLICY IF EXISTS "Public Read Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Admin Upload Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Admin Update Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Admin Delete Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Public read storage" ON storage.objects;
+DROP POLICY IF EXISTS "Allow upload storage" ON storage.objects;
+DROP POLICY IF EXISTS "Allow update storage" ON storage.objects;
+DROP POLICY IF EXISTS "Allow delete storage" ON storage.objects;
+
+CREATE OR REPLACE FUNCTION public.is_admin_user()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 
+    FROM public.profiles 
+    WHERE profiles.id::text = auth.uid()::text 
+      AND profiles.role IN ('admin', 'superadmin')
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_admin_user() TO authenticated, anon;
+
+CREATE POLICY "Public Read Image Buckets"
+ON storage.objects FOR SELECT
+TO public
+USING (
+  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
+);
+
+CREATE POLICY "Admin Upload Image Buckets"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
+  AND (
+    public.is_admin_user() 
+    OR EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE profiles.id::text = auth.uid()::text 
+        AND profiles.role IN ('admin', 'superadmin')
+    )
+  )
+);
+
+CREATE POLICY "Admin Update Image Buckets"
+ON storage.objects FOR UPDATE
+TO authenticated
+USING (
+  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
+  AND (
+    public.is_admin_user() 
+    OR EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE profiles.id::text = auth.uid()::text 
+        AND profiles.role IN ('admin', 'superadmin')
+    )
+  )
+)
+WITH CHECK (
+  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
+  AND (
+    public.is_admin_user() 
+    OR EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE profiles.id::text = auth.uid()::text 
+        AND profiles.role IN ('admin', 'superadmin')
+    )
+  )
+);
+
+CREATE POLICY "Admin Delete Image Buckets"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (
+  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
+  AND (
+    public.is_admin_user() 
+    OR EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE profiles.id::text = auth.uid()::text 
+        AND profiles.role IN ('admin', 'superadmin')
+    )
+  )
+);

@@ -62,6 +62,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+const DELIVERY_STATUS_RANK: Record<string, number> = {
+  'aceito': 1,
+  'retirado': 2,
+  'a_caminho': 3,
+  'entregue': 4,
+};
+
+function mergeOrdersPreservingProgression(prevOrders: Order[], incomingOrders: Order[]): Order[] {
+  if (!prevOrders || prevOrders.length === 0) return incomingOrders;
+
+  const prevMap = new Map<string, Order>(prevOrders.map(o => [o.id, o]));
+
+  return incomingOrders.map(incoming => {
+    const existing = prevMap.get(incoming.id);
+    if (!existing) return incoming;
+
+    // 1. Protect statusEntrega monotonicity (prevent stale network/realtime downgrade)
+    const existingRank = existing.statusEntrega ? (DELIVERY_STATUS_RANK[existing.statusEntrega] || 0) : 0;
+    const incomingRank = incoming.statusEntrega ? (DELIVERY_STATUS_RANK[incoming.statusEntrega] || 0) : 0;
+
+    let finalStatusEntrega = incoming.statusEntrega;
+    if (existingRank > incomingRank) {
+      finalStatusEntrega = existing.statusEntrega;
+    }
+
+    // 2. Protect general order status monotonicity (delivered cannot revert to ready)
+    let finalStatus = incoming.status;
+    if (existing.status === 'delivered' && incoming.status !== 'delivered') {
+      finalStatus = 'delivered';
+    }
+
+    // 3. Preserve motoboy assignment
+    const finalMotoboyId = incoming.motoboyId || existing.motoboyId;
+
+    return {
+      ...incoming,
+      status: finalStatus,
+      statusEntrega: finalStatusEntrega,
+      motoboyId: finalMotoboyId,
+    };
+  });
+}
+
   const loadOrders = useCallback(async () => {
     if (!user) {
       setOrders([]);
@@ -71,13 +114,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const allOrders = await dbService.getOrders();
       const role = profile?.role;
       if (role === 'admin' || role === 'superadmin' || role === 'motoboy') {
-        setOrders(allOrders);
+        setOrders(prev => mergeOrdersPreservingProgression(prev, allOrders));
       } else {
         const userOrders = allOrders.filter(o => 
           o.usuario?.uid === user.uid || 
           o.customerEmail === user.email
         );
-        setOrders(userOrders);
+        setOrders(prev => mergeOrdersPreservingProgression(prev, userOrders));
       }
     } catch (e) {
       console.warn('Error loading orders:', e);
