@@ -447,11 +447,15 @@ async function startServer() {
         console.log(`[Mercado Pago Webhook] Pedido #${orderId} -> Status: ${status}`);
         if (supabaseServer) {
           try {
-            await supabaseServer.from("orders").update({
+            const updatePayload = {
               payment_status: status === "approved" ? "paid" : status,
               mercadopago_status: status,
               mercadopago_payment_id: String(paymentId)
-            }).eq("id", String(orderId));
+            };
+            if (status === "approved") {
+              updatePayload.status = "pending";
+            }
+            await supabaseServer.from("orders").update(updatePayload).eq("id", String(orderId));
             console.log(`[Supabase Webhook Success] Pedido #${orderId} atualizado no Supabase.`);
           } catch (sbErr) {
             console.error(`[Supabase Webhook Error]:`, sbErr);
@@ -506,7 +510,21 @@ async function startServer() {
         throw getErr;
       }
       if (paymentInfo.status === "approved" && paymentInfo.external_reference) {
-        const orderRef = (0, import_firestore.doc)(db, "orders", String(paymentInfo.external_reference));
+        const orderId = String(paymentInfo.external_reference);
+        if (supabaseServer) {
+          try {
+            await supabaseServer.from("orders").update({
+              payment_status: "paid",
+              status: "pending",
+              mercadopago_status: "approved",
+              mercadopago_payment_id: String(paymentInfo.id)
+            }).eq("id", orderId);
+            console.log(`[Supabase Status Check] Pedido #${orderId} atualizado para 'paid' e 'pending' no Supabase.`);
+          } catch (sbErr) {
+            console.error(`[Supabase Error on Status Check]:`, sbErr);
+          }
+        }
+        const orderRef = (0, import_firestore.doc)(db, "orders", orderId);
         const orderSnap = await (0, import_firestore.getDoc)(orderRef);
         if (orderSnap.exists()) {
           const currentOrder = orderSnap.data();
