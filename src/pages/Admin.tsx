@@ -93,6 +93,22 @@ export default function Admin() {
 
   const handleConfirmStatusChange = async () => {
     if (!confirmStatusModal) return;
+
+    // Regra 6: Proteção rígida na ação de aceitar
+    if (confirmStatusModal.targetStatus === 'preparing') {
+      const targetOrder = orders.find(o => o.id === confirmStatusModal.orderId);
+      if (targetOrder) {
+        const isOnline = targetOrder.paymentMethod === 'mercadopago';
+        const isPaid = targetOrder.paymentStatus === 'paid' || targetOrder.statusPagamento === 'pago' || targetOrder.mercadopagoStatus === 'approved';
+        if (isOnline && !isPaid) {
+          alert('O pagamento online ainda não foi confirmado.');
+          setIsUpdatingStatus(false);
+          setConfirmStatusModal(null);
+          return;
+        }
+      }
+    }
+
     setIsUpdatingStatus(true);
     try {
       await updateOrderStatus(confirmStatusModal.orderId, confirmStatusModal.targetStatus);
@@ -187,18 +203,18 @@ export default function Admin() {
   const [refusalReason, setRefusalReason] = useState('');
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
 
-  const activeOrders = orders.filter((order) => {
-    // Only hide orders that are strictly in awaiting_payment (customer is still on payment checkout screen)
-    if (order.status === 'awaiting_payment') return false;
-    return true;
-  });
+  const activeOrders = orders;
 
   const filteredOrders = activeOrders.filter((order) => {
     if (selectedOrderStatusFilter === 'all') return true;
+    if (selectedOrderStatusFilter === 'pending') {
+      return order.status === 'pending' || order.status === 'awaiting_payment';
+    }
     return order.status === selectedOrderStatusFilter;
   });
 
   const getOrderStatusText = (order: Order) => {
+    if (order.status === 'awaiting_payment') return 'Aguardando Pagamento';
     if (order.status === 'pending') return 'Recebido';
     if (order.status === 'preparing') return 'Em Preparo';
     if (order.status === 'refused') return 'Recusado';
@@ -227,6 +243,7 @@ export default function Admin() {
   };
 
   const getOrderStatusBadgeStyle = (order: Order) => {
+    if (order.status === 'awaiting_payment') return 'bg-amber-50 text-amber-800 border-amber-300';
     if (order.status === 'pending') return 'bg-amber-50 text-amber-700 border-amber-200';
     if (order.status === 'preparing') return 'bg-blue-50 text-blue-700 border-blue-200';
     if (order.status === 'refused') return 'bg-rose-50 text-rose-700 border-rose-200';
@@ -252,6 +269,100 @@ export default function Admin() {
     }
 
     return 'bg-gray-50 text-gray-700 border-gray-200';
+  };
+
+  const getPaymentMethodDisplay = (order: Order): string => {
+    if (order.paymentMethod === 'mercadopago') {
+      return 'Mercado Pago (Online)';
+    }
+    if (order.paymentMethod === 'card') {
+      return order.tipoPedido === 'retirada' ? 'Cartão (No Balcão)' : 'Cartão (Maquininha na Entrega)';
+    }
+    if (order.paymentMethod === 'cash') {
+      return order.tipoPedido === 'retirada' ? 'Dinheiro (No Balcão)' : 'Dinheiro (Na Entrega)';
+    }
+    if (order.paymentMethod === 'pix') {
+      return 'Pix';
+    }
+    return order.paymentMethod || 'Não informado';
+  };
+
+  const renderPaymentBadge = (order: Order) => {
+    const isOnline = order.paymentMethod === 'mercadopago';
+    const isPaid = order.paymentStatus === 'paid' || order.statusPagamento === 'pago' || order.mercadopagoStatus === 'approved';
+    const isRefused = order.paymentStatus === 'refused' || order.paymentStatus === 'cancelled' || order.mercadopagoStatus === 'rejected';
+    const orderTotal = formatPrice(order.valorTotal || order.total);
+
+    // 1. MERCADO PAGO / ONLINE
+    if (isOnline) {
+      if (isPaid) {
+        return (
+          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-emerald-700 border border-emerald-500/20">
+            🟢 PAGO (Mercado Pago)
+          </span>
+        );
+      }
+      if (isRefused) {
+        return (
+          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-rose-700 border border-rose-500/20">
+            🔴 Pagamento online recusado
+          </span>
+        );
+      }
+      return (
+        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-amber-700 border border-amber-500/20">
+          🟠 Aguardando confirmação do pagamento online
+        </span>
+      );
+    }
+
+    // 2. PAGAMENTO NA ENTREGA (DELIVERY)
+    if (order.tipoPedido === 'entrega') {
+      const methodLabel = order.paymentMethod === 'card' ? 'Cartão' : 'Dinheiro';
+      if (isPaid || order.status === 'delivered') {
+        return (
+          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-emerald-700 border border-emerald-500/20">
+            🟢 Pago na Entrega ({methodLabel})
+          </span>
+        );
+      }
+      return (
+        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-amber-800 border border-amber-500/20">
+          🟡 Cobrar {orderTotal} na entrega ({methodLabel})
+        </span>
+      );
+    }
+
+    // 3. PAGAMENTO NO BALCÃO (RETIRADA)
+    if (order.tipoPedido === 'retirada') {
+      const methodLabel = order.paymentMethod === 'card' ? 'Cartão' : 'Dinheiro';
+      if (isPaid || order.status === 'delivered') {
+        return (
+          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-emerald-700 border border-emerald-500/20">
+            🟢 Pago no Balcão ({methodLabel})
+          </span>
+        );
+      }
+      return (
+        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-purple-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-purple-700 border border-purple-500/20">
+          🟡 Cobrar {orderTotal} no balcão ({methodLabel})
+        </span>
+      );
+    }
+
+    // Fallback genérico
+    if (isPaid) {
+      return (
+        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-emerald-700 border border-emerald-500/20">
+          🟢 PAGO
+        </span>
+      );
+    }
+    return (
+      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[9px] font-extrabold text-amber-700 border border-amber-500/20">
+        🟡 PENDENTE
+      </span>
+    );
   };
 
   const getStatusBadgeStyles = (status: OrderStatus) => {
@@ -852,23 +963,15 @@ export default function Admin() {
                       </div>
 
                       {/* Financial values summary */}
-                      <div className="mt-4 border-t border-dashed border-white/25 pt-3 flex items-center justify-between">
-                        <div>
+                      <div className="mt-4 border-t border-dashed border-white/25 pt-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center flex-wrap gap-1">
                           <span className="text-[10px] text-gray-400 font-medium uppercase">Forma de pag.:</span>
-                          <span className="ml-1 text-[10px] font-extrabold text-gray-800 uppercase">{order.paymentMethod}</span>
-                          {(order.paymentStatus === 'paid' || order.statusPagamento === 'pago') ? (
-                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-extrabold text-emerald-700 border border-emerald-500/20">
-                              🟢 PAGO (Mercado Pago)
-                            </span>
-                          ) : (
-                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold text-amber-700 border border-amber-500/20">
-                              🟡 PENDENTE
-                            </span>
-                          )}
+                          <span className="text-[10px] font-extrabold text-gray-800 uppercase">{getPaymentMethodDisplay(order)}</span>
+                          {renderPaymentBadge(order)}
                         </div>
                         <div className="text-right">
                           <span className="text-[10px] text-gray-400 font-medium uppercase block">Total:</span>
-                          <span className="font-sans text-sm font-extrabold text-orange-600">{formatPrice(order.total)}</span>
+                          <span className="font-sans text-sm font-extrabold text-orange-600">{formatPrice(order.valorTotal || order.total)}</span>
                         </div>
                       </div>
 
@@ -883,39 +986,99 @@ export default function Admin() {
                           />
                         )}
 
-                        {order.status === 'pending' && (
-                          <div className="flex-1 flex gap-2 w-full">
-                            <button
-                              onClick={() => {
-                                setConfirmStatusModal({
-                                  isOpen: true,
-                                  orderId: order.id,
-                                  targetStatus: 'preparing',
-                                  title: 'Aceitar e Preparar Pedido',
-                                  message: `Deseja aceitar o Pedido #${order.id} e alterar o status para "Em Preparo"?`,
-                                  confirmLabel: 'Aceitar e Preparar',
-                                  variant: 'orange'
-                                });
-                              }}
-                              id={`btn-status-preparing-${order.id}`}
-                              className="flex-1 flex items-center justify-center gap-1 bg-orange-600 text-white rounded-xl py-2.5 text-xs font-bold hover:bg-orange-700 transition"
-                            >
-                              <Check className="h-4 w-4" />
-                              Aceitar e Preparar
-                            </button>
-                            <button
-                              onClick={() => {
-                                setRefusingOrderId(order.id);
-                                setRefusalReason('');
-                              }}
-                              id={`btn-status-refuse-${order.id}`}
-                              className="flex-1 flex items-center justify-center gap-1 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl py-2.5 text-xs font-bold hover:bg-rose-100 transition"
-                            >
-                              <X className="h-4 w-4" />
-                              Recusar Pedido
-                            </button>
-                          </div>
-                        )}
+                        {(order.status === 'pending' || order.status === 'awaiting_payment') && (() => {
+                          const isOnline = order.paymentMethod === 'mercadopago';
+                          const isPaid = order.paymentStatus === 'paid' || order.statusPagamento === 'pago' || order.mercadopagoStatus === 'approved';
+                          const isRefused = order.paymentStatus === 'refused' || order.paymentStatus === 'cancelled' || order.mercadopagoStatus === 'rejected';
+
+                          // 1. Mercado Pago pendente ou recusado (não permitir Aceitar e Preparar)
+                          if (isOnline && !isPaid) {
+                            if (isRefused) {
+                              return (
+                                <div className="flex-1 flex items-center justify-between gap-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs">
+                                  <span className="text-[11px] font-extrabold text-rose-700 flex items-center gap-1.5">
+                                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                                    🔴 Pagamento online recusado
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRefusingOrderId(order.id);
+                                      setRefusalReason('Pagamento online recusado');
+                                    }}
+                                    id={`btn-status-refuse-${order.id}`}
+                                    className="text-[11px] font-bold text-rose-700 hover:text-rose-900 underline cursor-pointer"
+                                  >
+                                    Recusar Pedido
+                                  </button>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className="flex-1 flex items-center justify-between gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs">
+                                <span className="text-[11px] font-extrabold text-amber-800 flex items-center gap-1.5">
+                                  <Clock className="h-4 w-4 shrink-0 text-amber-600 animate-pulse" />
+                                  🟠 Aguardando confirmação do pagamento online
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRefusingOrderId(order.id);
+                                    setRefusalReason('Cancelado: Pagamento online não concluído');
+                                  }}
+                                  id={`btn-status-refuse-${order.id}`}
+                                  className="flex items-center gap-1 bg-white/80 border border-amber-300 text-gray-700 rounded-lg px-2.5 py-1 text-[10px] font-bold hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 transition cursor-pointer"
+                                  title="Recusar ou Cancelar Pedido"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  Recusar
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          // 2. Pedidos liberados para Aceitar e Preparar (Pagamento na Entrega, Balcão ou Mercado Pago Pago)
+                          return (
+                            <div className="flex-1 flex gap-2 w-full">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isOnline && !isPaid) {
+                                    alert('O pagamento online ainda não foi confirmado.');
+                                    return;
+                                  }
+                                  setConfirmStatusModal({
+                                    isOpen: true,
+                                    orderId: order.id,
+                                    targetStatus: 'preparing',
+                                    title: 'Aceitar e Preparar Pedido',
+                                    message: `Deseja aceitar o Pedido #${order.id} e alterar o status para "Em Preparo"?`,
+                                    confirmLabel: 'Aceitar e Preparar',
+                                    variant: 'orange'
+                                  });
+                                }}
+                                id={`btn-status-preparing-${order.id}`}
+                                className="flex-1 flex items-center justify-center gap-1 bg-orange-600 text-white rounded-xl py-2.5 text-xs font-bold hover:bg-orange-700 transition shadow-sm active:scale-95 cursor-pointer"
+                              >
+                                <Check className="h-4 w-4" />
+                                Aceitar e Preparar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRefusingOrderId(order.id);
+                                  setRefusalReason('');
+                                }}
+                                id={`btn-status-refuse-${order.id}`}
+                                className="flex-1 flex items-center justify-center gap-1 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl py-2.5 text-xs font-bold hover:bg-rose-100 transition cursor-pointer"
+                              >
+                                <X className="h-4 w-4" />
+                                Recusar Pedido
+                              </button>
+                            </div>
+                          );
+                        })()}
                         {order.status === 'refused' && (
                           <div className="flex-1 flex flex-col gap-1.5 p-3 rounded-xl bg-red-500/5 border border-red-500/15">
                             <div className="flex items-center gap-1.5 text-red-700 text-xs font-bold">

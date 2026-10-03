@@ -59,7 +59,7 @@ export interface Order {
   customerEmail?: string;
   address: string;
   complement?: string;
-  paymentMethod: 'pix' | 'card' | 'cash';
+  paymentMethod: 'pix' | 'card' | 'cash' | 'mercadopago' | string;
   items: OrderItem[];
   subtotal: number;
   deliveryFee: number;
