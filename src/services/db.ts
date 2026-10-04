@@ -529,6 +529,12 @@ export const dbService = {
               motoboyId: o.motoboy_id || localOrder?.motoboyId,
               mercadopagoPaymentId: o.mercadopago_payment_id,
               mercadopagoStatus: o.mercadopago_status,
+              motivoRecusa: o.motivo_recusa || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.motivoRecusa : undefined) || localOrder?.motivoRecusa,
+              refundStatus: o.refund_status || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.refundStatus : undefined) || localOrder?.refundStatus,
+              refundId: o.refund_id || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.refundId : undefined) || localOrder?.refundId,
+              refundedAt: o.refunded_at || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.refundedAt : undefined) || localOrder?.refundedAt,
+              refundError: o.refund_error || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.refundError : undefined) || localOrder?.refundError,
+              refundAmount: o.refund_amount ? Number(o.refund_amount) : (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.refundAmount : undefined) || localOrder?.refundAmount,
             };
           }) as unknown as Order[];
           setLocalItem(LOCAL_STORAGE_KEYS.ORDERS, list);
@@ -643,12 +649,26 @@ export const dbService = {
     const existing = current.find(o => o.id === id);
     const updatedOrder: Order = existing ? { ...existing, ...fields } : ({ id, ...fields, createdAt: new Date().toISOString() } as any);
 
-    // Persist statusEntrega into endereco JSONB (guaranteed to exist in PostgreSQL)
-    if (fields.statusEntrega !== undefined) {
+    // Persist statusEntrega, refund metadata, and motivoRecusa into endereco JSONB (guaranteed to exist in PostgreSQL)
+    if (
+      fields.statusEntrega !== undefined ||
+      fields.refundStatus !== undefined ||
+      fields.refundId !== undefined ||
+      fields.refundedAt !== undefined ||
+      fields.refundError !== undefined ||
+      fields.refundAmount !== undefined ||
+      fields.motivoRecusa !== undefined
+    ) {
       const currentEndereco = typeof updatedOrder.endereco === 'object' && updatedOrder.endereco !== null ? updatedOrder.endereco : {};
       updatedOrder.endereco = {
         ...currentEndereco,
-        statusEntrega: fields.statusEntrega,
+        ...(fields.statusEntrega !== undefined ? { statusEntrega: fields.statusEntrega } : {}),
+        ...(fields.refundStatus !== undefined ? { refundStatus: fields.refundStatus } : {}),
+        ...(fields.refundId !== undefined ? { refundId: fields.refundId } : {}),
+        ...(fields.refundedAt !== undefined ? { refundedAt: fields.refundedAt } : {}),
+        ...(fields.refundError !== undefined ? { refundError: fields.refundError } : {}),
+        ...(fields.refundAmount !== undefined ? { refundAmount: fields.refundAmount } : {}),
+        ...(fields.motivoRecusa !== undefined ? { motivoRecusa: fields.motivoRecusa } : {}),
       } as any;
     }
 
@@ -662,7 +682,7 @@ export const dbService = {
         if (fields.motoboyId !== undefined) sbUpdates.motoboy_id = fields.motoboyId;
         if (fields.mercadopagoPaymentId !== undefined) sbUpdates.mercadopago_payment_id = fields.mercadopagoPaymentId;
         if (fields.mercadopagoStatus !== undefined) sbUpdates.mercadopago_status = fields.mercadopagoStatus;
-        if (fields.statusEntrega !== undefined && updatedOrder.endereco) {
+        if (updatedOrder.endereco) {
           sbUpdates.endereco = updatedOrder.endereco;
         }
 

@@ -125,8 +125,14 @@ export default function MyOrders() {
     }
   };
 
-  const getOrderStatusInfo = (status: string, statusEntrega?: string) => {
+  const getOrderStatusInfo = (status: string, statusEntrega?: string, refundStatus?: string) => {
     if (status === 'refused') {
+      if (refundStatus === 'REEMBOLSADO') {
+        return { label: 'Recusado • Reembolso confirmado', color: 'bg-emerald-50 text-emerald-800 border-emerald-200', step: 0 };
+      }
+      if (refundStatus === 'REEMBOLSO_PROCESSANDO' || refundStatus === 'REEMBOLSO_PENDENTE') {
+        return { label: 'Recusado • Reembolso em processamento', color: 'bg-amber-50 text-amber-800 border-amber-200', step: 0 };
+      }
       return { label: 'Pedido Recusado', color: 'bg-rose-50 text-rose-700 border-rose-100', step: 0 };
     }
     if (status === 'delivered' || statusEntrega === 'entregue') {
@@ -608,7 +614,7 @@ export default function MyOrders() {
                     </div>
                   ) : (
                     displayedOrders.map((order) => {
-                    const statusInfo = getOrderStatusInfo(order.status, order.statusEntrega);
+                    const statusInfo = getOrderStatusInfo(order.status, order.statusEntrega, order.refundStatus);
                     const isExpanded = expandedOrderId === order.id;
 
                     return (
@@ -665,16 +671,64 @@ export default function MyOrders() {
                         {/* Real-time Order Tracking Status Progress */}
                         <div className="px-4 pb-4 bg-white/20 border-t border-white/10">
                           {order.status === 'refused' ? (
-                            <div className="mt-3 p-3.5 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-2.5 text-rose-700 animate-pulse">
-                              <AlertCircle className="h-5 w-5 shrink-0 text-rose-600 mt-0.5" />
-                              <div className="flex-1">
-                                <p className="text-xs font-bold uppercase tracking-wider text-rose-800">Pedido Recusado pelo Restaurante</p>
-                                {order.motivoRecusa && (
-                                  <p className="text-xs font-semibold text-rose-600 mt-1 leading-relaxed">
-                                    <strong>Motivo:</strong> {order.motivoRecusa}
-                                  </p>
-                                )}
+                            <div className="mt-3 p-4 bg-rose-50/90 border border-rose-200 rounded-2xl flex flex-col gap-2.5 text-rose-800">
+                              <div className="flex items-start gap-2.5">
+                                <AlertCircle className="h-5 w-5 shrink-0 text-rose-600 mt-0.5" />
+                                <div className="flex-1">
+                                  <p className="text-xs font-extrabold uppercase tracking-wider text-rose-900">Pedido Recusado pelo Restaurante</p>
+                                  {order.motivoRecusa && (
+                                    <p className="text-xs font-medium text-rose-700 mt-1 leading-relaxed">
+                                      <strong>Motivo informado:</strong> {order.motivoRecusa}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
+
+                              {/* Reembolso status para o cliente */}
+                              {order.paymentMethod === 'mercadopago' && (
+                                <div className="mt-1 pt-2.5 border-t border-rose-200/60">
+                                  {order.refundStatus === 'REEMBOLSADO' ? (
+                                    <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-emerald-800">
+                                      <Check className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                                      <div className="text-xs">
+                                        <p className="font-extrabold text-emerald-900">Reembolso confirmado</p>
+                                        <p className="text-[11px] text-emerald-700 mt-0.5 leading-relaxed">
+                                          O estorno no valor de <strong>{formatPrice(order.valorTotal || order.total)}</strong> foi processado com sucesso pelo Mercado Pago e será creditado na sua conta ou fatura.
+                                        </p>
+                                        {order.refundId && (
+                                          <p className="text-[10px] text-emerald-600 font-mono mt-1">ID do Estorno: {order.refundId}</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ) : (order.refundStatus === 'REEMBOLSO_PROCESSANDO' || order.refundStatus === 'REEMBOLSO_PENDENTE') ? (
+                                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-amber-800">
+                                      <Clock3 className="h-4 w-4 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                                      <div className="text-xs">
+                                        <p className="font-extrabold text-amber-900">Reembolso em processamento</p>
+                                        <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                                          A solicitação de estorno no valor de <strong>{formatPrice(order.valorTotal || order.total)}</strong> foi enviada ao Mercado Pago e está sendo concluída.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-amber-800">
+                                      <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                                      <div className="text-xs">
+                                        <p className="font-extrabold text-amber-900">Reembolso em análise</p>
+                                        <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                                          Nossa equipe está concluindo o processamento do estorno do valor de <strong>{formatPrice(order.valorTotal || order.total)}</strong>. Fique tranquilo(a), qualquer dúvida estamos no WhatsApp.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {order.paymentMethod !== 'mercadopago' && (
+                                <div className="mt-1 pt-2 border-t border-rose-200/60 text-[11px] text-rose-700">
+                                  <span>Como a forma de pagamento escolhida era presencial (entrega/balcão), <strong>nenhuma cobrança foi efetuada</strong>.</span>
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <>

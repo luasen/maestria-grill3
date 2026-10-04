@@ -98,7 +98,16 @@ export interface Order {
   mercadopagoStatus?: string;
   mercadopagoPaymentMethod?: string;
   paidAt?: string;
+
+  // Mercado Pago Refund Fields
+  refundStatus?: 'REEMBOLSO_PENDENTE' | 'REEMBOLSO_PROCESSANDO' | 'REEMBOLSADO' | 'FALHA_NO_REEMBOLSO';
+  refundId?: string;
+  refundedAt?: string;
+  refundError?: string;
+  refundAmount?: number;
 }
+
+export type RefundStatus = 'REEMBOLSO_PENDENTE' | 'REEMBOLSO_PROCESSANDO' | 'REEMBOLSADO' | 'FALHA_NO_REEMBOLSO';
 
 export interface Coupon {
   id: string;

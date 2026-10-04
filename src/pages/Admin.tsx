@@ -75,6 +75,8 @@ export default function Admin() {
     updateUserProfile,
     setActiveView,
     refreshData,
+    refuseOrder,
+    retryRefund,
   } = useApp();
 
   const { user, profile, loading, setIsAuthOpen } = useAuth();
@@ -90,6 +92,8 @@ export default function Admin() {
     variant: 'orange' | 'blue' | 'emerald' | 'rose' | 'amber';
   } | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isRefusing, setIsRefusing] = useState(false);
+  const [retryingRefundId, setRetryingRefundId] = useState<string | null>(null);
 
   const handleConfirmStatusChange = async () => {
     if (!confirmStatusModal) return;
@@ -843,7 +847,7 @@ export default function Admin() {
               {/* Order Status Filters & Instant Refresh */}
               <div className="flex items-center justify-between gap-2 pb-2">
                 <div className="overflow-x-auto flex gap-1.5 scrollbar-none flex-1">
-                  {['all', 'pending', 'preparing', 'ready', 'delivered'].map((f) => (
+                  {['all', 'pending', 'preparing', 'ready', 'delivered', 'refused'].map((f) => (
                     <button
                       key={f}
                       id={`filter-order-${f}`}
@@ -1079,19 +1083,130 @@ export default function Admin() {
                             </div>
                           );
                         })()}
-                        {order.status === 'refused' && (
-                          <div className="flex-1 flex flex-col gap-1.5 p-3 rounded-xl bg-red-500/5 border border-red-500/15">
-                            <div className="flex items-center gap-1.5 text-red-700 text-xs font-bold">
-                              <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
-                              <span>Pedido Recusado</span>
+                        {order.status === 'refused' && (() => {
+                          const isOnline = order.paymentMethod === 'mercadopago';
+                          return (
+                            <div className="flex-1 flex flex-col gap-2 p-3.5 rounded-2xl bg-rose-50/70 border border-rose-200">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 text-rose-700 text-xs font-bold">
+                                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                                  <span>Pedido Recusado</span>
+                                </div>
+                                <span className="text-[10px] font-bold text-gray-500 uppercase">
+                                  Valor: {formatPrice(order.valorTotal || order.total)}
+                                </span>
+                              </div>
+
+                              {order.motivoRecusa && (
+                                <p className="text-[11px] text-gray-700 font-medium leading-relaxed bg-white/60 p-2 rounded-xl border border-rose-100">
+                                  <strong className="text-gray-900">Motivo:</strong> {order.motivoRecusa}
+                                </p>
+                              )}
+
+                              {/* Informações detalhadas de Reembolso do Mercado Pago para o Administrador */}
+                              {isOnline && (
+                                <div className="flex flex-col gap-1.5 pt-1 border-t border-rose-200/60 text-[11px]">
+                                  <div className="flex items-center justify-between flex-wrap gap-1">
+                                    <span className="font-semibold text-gray-600">ID Pagamento MP:</span>
+                                    <span className="font-mono text-gray-800 font-bold">{order.mercadopagoPaymentId || 'Não registrado'}</span>
+                                  </div>
+
+                                  {order.refundStatus === 'REEMBOLSADO' && (
+                                    <div className="flex flex-col gap-1 p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800">
+                                      <div className="flex items-center gap-1.5 font-bold">
+                                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                        <span>🟢 Reembolso confirmado no Mercado Pago</span>
+                                      </div>
+                                      {order.refundId && (
+                                        <span className="text-[10px] font-mono text-emerald-700">ID do Estorno: {order.refundId}</span>
+                                      )}
+                                      {order.refundedAt && (
+                                        <span className="text-[10px] text-emerald-600">Data/Hora: {formatDate(order.refundedAt)}</span>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {order.refundStatus === 'REEMBOLSO_PROCESSANDO' && (
+                                    <div className="flex flex-col gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800">
+                                      <div className="flex items-center gap-1.5 font-bold text-xs">
+                                        <Clock className="h-3.5 w-3.5 text-amber-600 animate-spin" />
+                                        <span>🟠 Reembolso em processamento no Mercado Pago...</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={retryingRefundId === order.id}
+                                        onClick={async () => {
+                                          setRetryingRefundId(order.id);
+                                          try {
+                                            const retried = await retryRefund(order.id);
+                                            if (retried.refundStatus === 'REEMBOLSADO') {
+                                              alert(`Reembolso do pedido #${order.id} confirmado com sucesso no Mercado Pago!`);
+                                            } else if (retried.refundStatus === 'FALHA_NO_REEMBOLSO') {
+                                              alert(`Status sincronizado: ${retried.refundError || 'Reembolso anterior não concluído no Mercado Pago'}. O botão para tentar novamente foi liberado.`);
+                                            } else {
+                                              alert(`Status atual no Mercado Pago: ${retried.refundStatus}`);
+                                            }
+                                          } catch (e: any) {
+                                            alert(e?.message || 'Erro ao sincronizar status.');
+                                          } finally {
+                                            setRetryingRefundId(null);
+                                          }
+                                        }}
+                                        className="self-start rounded-lg bg-amber-600 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-amber-700 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                      >
+                                        <RotateCw className={`h-3 w-3 ${retryingRefundId === order.id ? 'animate-spin' : ''}`} />
+                                        <span>{retryingRefundId === order.id ? 'Verificando...' : 'Verificar / Sincronizar com Mercado Pago'}</span>
+                                      </button>
+                                    </div>
+                                  )}
+
+                                  {(order.refundStatus === 'FALHA_NO_REEMBOLSO' || order.refundStatus === 'REEMBOLSO_PENDENTE') && (
+                                    <div className="flex flex-col gap-2 p-2 rounded-xl bg-rose-100/70 border border-rose-300 text-rose-800">
+                                      <div className="flex items-center gap-1.5 font-bold">
+                                        <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
+                                        <span>🔴 Falha no Reembolso Automático</span>
+                                      </div>
+                                      {order.refundError && (
+                                        <span className="text-[10px] font-mono text-rose-700 break-words leading-tight">
+                                          Erro: {order.refundError}
+                                        </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        disabled={retryingRefundId === order.id}
+                                        onClick={async () => {
+                                          setRetryingRefundId(order.id);
+                                          try {
+                                            const retried = await retryRefund(order.id);
+                                            if (retried.refundStatus === 'REEMBOLSADO') {
+                                              alert(`Reembolso do pedido #${order.id} processado com sucesso!`);
+                                            } else {
+                                              alert(`Falha no estorno: ${retried.refundError || 'Verifique o Mercado Pago'}`);
+                                            }
+                                          } catch (e: any) {
+                                            alert(e?.message || 'Erro ao tentar reprocessar reembolso.');
+                                          } finally {
+                                            setRetryingRefundId(null);
+                                          }
+                                        }}
+                                        className="self-start rounded-lg bg-rose-600 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-rose-700 transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                      >
+                                        <RotateCw className={`h-3 w-3 ${retryingRefundId === order.id ? 'animate-spin' : ''}`} />
+                                        <span>{retryingRefundId === order.id ? 'Tentando...' : 'Tentar Reembolso Novamente'}</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {!isOnline && (
+                                <div className="text-[10px] text-gray-500 italic pt-1 border-t border-rose-200/40">
+                                  Pagamento presencial selecionado (nenhuma cobrança online realizada).
+                                </div>
+                              )}
                             </div>
-                            {order.motivoRecusa && (
-                              <p className="text-[10px] text-gray-500 font-medium leading-normal">
-                                <strong>Motivo:</strong> {order.motivoRecusa}
-                              </p>
-                            )}
-                          </div>
-                        )}
+                          );
+                        })()}
                         {order.status === 'preparing' && (
                           <div className="flex-1 flex gap-2 w-full">
                             <button
@@ -3233,6 +3348,28 @@ export default function Admin() {
               <p className="text-xs text-gray-600 mb-4 leading-relaxed">
                 Por favor, informe o motivo do cancelamento ou recusa deste pedido. Esta informação ficará registrada e visível no acompanhamento do cliente.
               </p>
+
+              {(() => {
+                const currentRefusingOrder = orders.find(o => o.id === refusingOrderId);
+                const isOnlinePaid = currentRefusingOrder &&
+                  currentRefusingOrder.paymentMethod === 'mercadopago' &&
+                  (currentRefusingOrder.paymentStatus === 'paid' || currentRefusingOrder.statusPagamento === 'pago' || currentRefusingOrder.mercadopagoStatus === 'approved');
+
+                if (isOnlinePaid) {
+                  return (
+                    <div className="mb-4 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                      <p className="font-bold flex items-center gap-1.5 mb-1">
+                        <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                        Pedido com pagamento online confirmado
+                      </p>
+                      <p className="text-[11px] text-amber-700 leading-relaxed">
+                        Ao confirmar a recusa, o sistema acionará automaticamente a API do <strong>Mercado Pago</strong> para efetuar o estorno integral no valor de <strong>{formatPrice(currentRefusingOrder.valorTotal || currentRefusingOrder.total)}</strong>.
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
               
               <div className="mb-5">
                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Motivo do Cancelamento / Recusa</label>
@@ -3250,20 +3387,41 @@ export default function Admin() {
                 <button
                   type="button"
                   onClick={() => setRefusingOrderId(null)}
+                  disabled={isRefusing}
                   className="rounded-xl border border-white/45 bg-white/20 py-2.5 px-4 text-xs font-bold text-gray-500 hover:bg-white/50 transition"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
-                  disabled={!refusalReason.trim()}
+                  disabled={!refusalReason.trim() || isRefusing}
                   onClick={async () => {
-                    await updateOrder(refusingOrderId, { status: 'refused', motivoRecusa: refusalReason });
-                    setRefusingOrderId(null);
+                    if (!refusingOrderId) return;
+                    setIsRefusing(true);
+                    try {
+                      const resOrder = await refuseOrder(refusingOrderId, refusalReason);
+                      setRefusingOrderId(null);
+                      if (resOrder?.refundStatus === 'REEMBOLSADO') {
+                        alert(`Pedido #${refusingOrderId} recusado e estorno confirmado pelo Mercado Pago!`);
+                      } else if (resOrder?.refundStatus === 'FALHA_NO_REEMBOLSO') {
+                        alert(`Pedido recusado, mas houve falha no estorno automático: ${resOrder.refundError || 'Verifique no Mercado Pago'}.`);
+                      }
+                    } catch (err: any) {
+                      alert(err?.message || 'Erro ao processar recusa do pedido.');
+                    } finally {
+                      setIsRefusing(false);
+                    }
                   }}
-                  className="rounded-xl bg-rose-600 py-2.5 px-5 text-xs font-bold text-white hover:bg-rose-700 transition disabled:opacity-40 disabled:pointer-events-none"
+                  className="rounded-xl bg-rose-600 py-2.5 px-5 text-xs font-bold text-white hover:bg-rose-700 transition disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
                 >
-                  Confirmar Recusa
+                  {isRefusing ? (
+                    <>
+                      <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Processando...</span>
+                    </>
+                  ) : (
+                    'Confirmar Recusa'
+                  )}
                 </button>
               </div>
             </motion.div>

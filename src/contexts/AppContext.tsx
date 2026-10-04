@@ -30,6 +30,8 @@ interface AppContextType {
   updateSettings: (settings: RestaurantSettings) => Promise<RestaurantSettings>;
   getUsers: () => Promise<UserProfile[]>;
   updateUserProfile: (uid: string, fields: Partial<UserProfile>) => Promise<void>;
+  refuseOrder: (id: string, motivoRecusa: string) => Promise<Order>;
+  retryRefund: (id: string) => Promise<Order>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -96,11 +98,28 @@ function mergeOrdersPreservingProgression(prevOrders: Order[], incomingOrders: O
     // 3. Preserve motoboy assignment
     const finalMotoboyId = incoming.motoboyId || existing.motoboyId;
 
+    // 4. Protect refused status and refund metadata
+    if (existing.status === 'refused' && incoming.status !== 'refused') {
+      finalStatus = 'refused';
+    }
+    const finalRefundStatus = incoming.refundStatus || existing.refundStatus;
+    const finalRefundId = incoming.refundId || existing.refundId;
+    const finalRefundedAt = incoming.refundedAt || existing.refundedAt;
+    const finalRefundError = incoming.refundError || existing.refundError;
+    const finalRefundAmount = incoming.refundAmount || existing.refundAmount;
+    const finalMotivoRecusa = incoming.motivoRecusa || existing.motivoRecusa;
+
     return {
       ...incoming,
       status: finalStatus,
       statusEntrega: finalStatusEntrega,
       motoboyId: finalMotoboyId,
+      refundStatus: finalRefundStatus,
+      refundId: finalRefundId,
+      refundedAt: finalRefundedAt,
+      refundError: finalRefundError,
+      refundAmount: finalRefundAmount,
+      motivoRecusa: finalMotivoRecusa,
     };
   });
 }
@@ -266,6 +285,51 @@ function mergeOrdersPreservingProgression(prevOrders: Order[], incomingOrders: O
     await dbService.updateUserProfile(uid, fields);
   };
 
+  const handleRefuseOrder = async (id: string, motivoRecusa: string): Promise<Order> => {
+    try {
+      const response = await fetch(`/api/orders/${id}/refuse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ motivoRecusa }),
+      });
+      const data = await response.json();
+      if (!response.ok && data.error && !data.order) {
+        throw new Error(data.error);
+      }
+      const updatedOrder = data.order || (await dbService.getOrders()).find(o => o.id === id);
+      if (updatedOrder) {
+        setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updatedOrder } : o));
+        return updatedOrder;
+      }
+    } catch (err: any) {
+      console.warn('Backend refuse order error, executing local fallback:', err);
+      const fallback = await dbService.updateOrder(id, {
+        status: 'refused',
+        motivoRecusa,
+      });
+      setOrders(prev => prev.map(o => o.id === id ? fallback : o));
+      return fallback;
+    }
+    return orders.find(o => o.id === id)!;
+  };
+
+  const handleRetryRefund = async (id: string): Promise<Order> => {
+    const response = await fetch(`/api/orders/${id}/retry-refund`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Erro ao reprocessar estorno no servidor.');
+    }
+    const updatedOrder = data.order;
+    if (updatedOrder) {
+      setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updatedOrder } : o));
+      return updatedOrder;
+    }
+    return orders.find(o => o.id === id)!;
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -289,6 +353,8 @@ function mergeOrdersPreservingProgression(prevOrders: Order[], incomingOrders: O
         updateSettings: handleUpdateSettings,
         getUsers: handleGetUsers,
         updateUserProfile: handleUpdateUserProfile,
+        refuseOrder: handleRefuseOrder,
+        retryRefund: handleRetryRefund,
       }}
     >
       {children}

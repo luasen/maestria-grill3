@@ -3,9 +3,9 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
-import { MercadoPagoConfig, Payment, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Payment, Preference, PaymentRefund } from 'mercadopago';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { createClient } from '@supabase/supabase-js';
 import firebaseConfig from './firebase-applet-config.json' assert { type: 'json' };
 
@@ -16,9 +16,19 @@ const supabaseServer = SUPABASE_URL.startsWith('https://') && SUPABASE_ANON_KEY
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
-// Initialize Firebase App for backwards-compatible server-side order updates
 const firebaseServerApp = initializeApp(firebaseConfig, 'server-app');
 const db = getFirestore(firebaseServerApp, firebaseConfig.firestoreDatabaseId);
+
+// Helper to remove any undefined fields before writing to Firestore
+function cleanFirestoreData<T extends Record<string, any>>(data: T): Partial<T> {
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      cleaned[key] = value;
+    }
+  }
+  return cleaned as Partial<T>;
+}
 
 // Environment setup for Mercado Pago Credentials
 const MERCADOPAGO_ACCESS_TOKEN =
@@ -34,6 +44,7 @@ const mpClient = new MercadoPagoConfig({
 });
 const mpPayment = new Payment(mpClient);
 const mpPreference = new Preference(mpClient);
+const mpRefund = new PaymentRefund(mpClient);
 
 async function startServer() {
   const app = express();
@@ -252,7 +263,7 @@ async function startServer() {
       if (paymentResponse.status === 'approved') {
         try {
           const orderRef = doc(db, 'orders', String(orderData.id));
-          await updateDoc(orderRef, {
+          await setDoc(orderRef, cleanFirestoreData({
             paymentStatus: 'paid',
             statusPagamento: 'pago',
             status: 'pending', // Move to pending so restaurant can accept or refuse
@@ -260,7 +271,7 @@ async function startServer() {
             mercadopagoPaymentId: String(paymentResponse.id),
             mercadopagoStatus: paymentResponse.status,
             mercadopagoPaymentMethod: paymentResponse.payment_method_id,
-          });
+          }), { merge: true });
           console.log(`[Firestore] Pedido #${orderData.id} pago! Status alterado para 'pending' (Aguardando aceite do restaurante).`);
         } catch (dbErr) {
           console.error(`[Firestore Error] Erro ao atualizar pedido #${orderData.id}:`, dbErr);
@@ -269,11 +280,11 @@ async function startServer() {
         // Save Mercado Pago payment ID to order in Firestore for webhook tracking
         try {
           const orderRef = doc(db, 'orders', String(orderData.id));
-          await updateDoc(orderRef, {
+          await setDoc(orderRef, cleanFirestoreData({
             mercadopagoPaymentId: String(paymentResponse.id),
             mercadopagoStatus: paymentResponse.status,
             mercadopagoPaymentMethod: paymentResponse.payment_method_id,
-          });
+          }), { merge: true });
         } catch (dbErr) {
           console.error(`[Firestore Error] Erro ao vincular paymentId no pedido:`, dbErr);
         }
@@ -448,11 +459,11 @@ async function startServer() {
 
       try {
         const orderRef = doc(db, 'orders', String(orderData.id));
-        await updateDoc(orderRef, {
+        await setDoc(orderRef, {
           mercadopagoPaymentId: String(paymentResponse.id),
           mercadopagoStatus: paymentResponse.status,
           mercadopagoPaymentMethod: 'pix',
-        });
+        }, { merge: true });
       } catch (dbErr) {
         // silent or fallback
       }
@@ -471,6 +482,523 @@ async function startServer() {
         error: 'Erro ao gerar QR Code Pix no Mercado Pago',
         details: error?.cause?.[0]?.description || error?.message || String(error),
       });
+    }
+  });
+
+  // Helper to fetch order from Supabase or Firestore
+  async function getOrderById(orderId: string): Promise<any | null> {
+    if (supabaseServer) {
+      try {
+        const { data, error } = await supabaseServer
+          .from('orders')
+          .select('*')
+          .eq('id', String(orderId))
+          .maybeSingle();
+        if (!error && data) {
+          const rawEndereco = data.endereco;
+          return {
+            id: data.id,
+            customerName: data.customer_name,
+            customerEmail: data.customer_email,
+            paymentMethod: data.payment_method,
+            paymentStatus: data.payment_status,
+            status: data.status,
+            total: Number(data.total || 0),
+            tipoPedido: data.tipo_pedido,
+            endereco: rawEndereco,
+            motoboyId: data.motoboy_id,
+            mercadopagoPaymentId: data.mercadopago_payment_id,
+            mercadopagoStatus: data.mercadopago_status,
+            refundStatus: data.refund_status || (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.refundStatus : undefined),
+            refundId: data.refund_id || (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.refundId : undefined),
+            refundedAt: data.refunded_at || (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.refundedAt : undefined),
+            refundError: data.refund_error || (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.refundError : undefined),
+            refundAmount: data.refund_amount ? Number(data.refund_amount) : (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.refundAmount : undefined),
+            refundProcessingStartedAt: data.refund_processing_started_at || (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.refundProcessingStartedAt : undefined),
+            motivoRecusa: data.motivo_recusa || (typeof rawEndereco === 'object' && rawEndereco ? rawEndereco.motivoRecusa : undefined),
+          };
+        }
+      } catch (err) {
+        console.warn('[server getOrderById Supabase warning]:', err);
+      }
+    }
+
+    try {
+      const snap = await getDoc(doc(db, 'orders', String(orderId)));
+      if (snap.exists()) {
+        return { id: snap.id, ...snap.data() };
+      }
+    } catch (err) {
+      console.warn('[server getOrderById Firestore warning]:', err);
+    }
+
+    return null;
+  }
+
+  function humanizeMercadoPagoError(errorMsg: string): string {
+    if (!errorMsg) return 'Erro desconhecido ao processar no Mercado Pago.';
+    if (errorMsg.includes('pp core refund response missing refund_id')) {
+      return 'O pagamento já foi estornado no Mercado Pago ou a adquirente não pôde emitir um novo ID de estorno.';
+    }
+    if (errorMsg.includes("Collector hasn't enough available money") || errorMsg.includes("hasn't enough available money")) {
+      return "Saldo insuficiente na conta Mercado Pago do restaurante para estorno imediato (Collector hasn't enough available money). Adicione saldo à sua conta Mercado Pago ou tente novamente após a liberação dos fundos.";
+    }
+    if (errorMsg.includes('payment has already been refunded') || errorMsg.includes('already refunded')) {
+      return 'Este pagamento já foi estornado anteriormente no Mercado Pago.';
+    }
+    if (errorMsg.includes('invalid_parameter') || errorMsg.includes('payment_id')) {
+      return 'ID de pagamento inválido ou não encontrado no Mercado Pago.';
+    }
+    return errorMsg;
+  }
+
+  // Helper to persist order updates in Supabase and Firestore
+  async function saveOrderUpdates(orderId: string, updates: any) {
+    if (supabaseServer) {
+      try {
+        const sbUpdates: any = {};
+        if (updates.status !== undefined) sbUpdates.status = updates.status;
+        if (updates.paymentStatus !== undefined) sbUpdates.payment_status = updates.paymentStatus;
+        if (updates.mercadopagoStatus !== undefined) sbUpdates.mercadopago_status = updates.mercadopagoStatus;
+
+        const { data: currentDb } = await supabaseServer.from('orders').select('endereco').eq('id', String(orderId)).maybeSingle();
+        const currentEndereco = typeof currentDb?.endereco === 'object' && currentDb?.endereco !== null ? currentDb.endereco : {};
+
+        sbUpdates.endereco = {
+          ...currentEndereco,
+          ...(updates.motivoRecusa !== undefined ? { motivoRecusa: updates.motivoRecusa } : {}),
+          ...(updates.refundStatus !== undefined ? { refundStatus: updates.refundStatus } : {}),
+          ...(updates.refundId !== undefined ? { refundId: updates.refundId } : {}),
+          ...(updates.refundedAt !== undefined ? { refundedAt: updates.refundedAt } : {}),
+          ...(updates.refundError !== undefined ? { refundError: updates.refundError } : {}),
+          ...(updates.refundAmount !== undefined ? { refundAmount: updates.refundAmount } : {}),
+          ...(updates.refundProcessingStartedAt !== undefined ? { refundProcessingStartedAt: updates.refundProcessingStartedAt } : {}),
+        };
+
+        await supabaseServer.from('orders').update(sbUpdates).eq('id', String(orderId));
+      } catch (sbErr) {
+        console.error('[server saveOrderUpdates Supabase error]:', sbErr);
+      }
+    }
+
+    try {
+      const orderRef = doc(db, 'orders', String(orderId));
+      await setDoc(orderRef, cleanFirestoreData(updates), { merge: true });
+    } catch (fsErr) {
+      console.error('[server saveOrderUpdates Firestore error]:', fsErr);
+    }
+  }
+
+  // Safe reconciliation helper: queries real payment state on Mercado Pago to avoid stuck states and duplicate refunds
+  async function reconcileOrderRefundWithMercadoPago(
+    order: any,
+    options: { forceTransitionIfNoRefund?: boolean } = {}
+  ): Promise<{
+    reconciled: boolean;
+    status: 'REEMBOLSADO' | 'FALHA_NO_REEMBOLSO' | 'REEMBOLSO_PROCESSANDO';
+    order: any;
+    error?: string;
+  }> {
+    const paymentId = order.mercadopagoPaymentId || order.mercadopago_payment_id;
+    if (!paymentId) {
+      const failData = {
+        refundStatus: 'FALHA_NO_REEMBOLSO',
+        refundError: 'ID do pagamento Mercado Pago não localizado no registro do pedido.',
+      };
+      await saveOrderUpdates(order.id, failData);
+      return {
+        reconciled: true,
+        status: 'FALHA_NO_REEMBOLSO',
+        order: { ...order, ...failData },
+        error: failData.refundError,
+      };
+    }
+
+    try {
+      console.log(`[Reconciliação MP] Consultando status real do Pagamento #${paymentId} no Mercado Pago...`);
+      const paymentInfo = await mpPayment.get({ id: String(paymentId) });
+      console.log(
+        `[Reconciliação MP] Resposta MP #${paymentId}: status='${paymentInfo.status}', refunded_amount=${paymentInfo.transaction_amount_refunded}, refunds=${paymentInfo.refunds?.length || 0}`
+      );
+
+      // Check if refund was completed in Mercado Pago
+      const hasApprovedRefund =
+        paymentInfo.status === 'refunded' ||
+        (Number(paymentInfo.transaction_amount_refunded || 0) > 0 &&
+          Number(paymentInfo.transaction_amount_refunded) >= Number(paymentInfo.transaction_amount || 0)) ||
+        (Array.isArray(paymentInfo.refunds) && paymentInfo.refunds.some((r: any) => r.status === 'approved'));
+
+      if (hasApprovedRefund) {
+        const approvedRefund =
+          paymentInfo.refunds?.find((r: any) => r.status === 'approved') || paymentInfo.refunds?.[0];
+
+        const successData: any = {
+          status: 'refused',
+          paymentStatus: 'refunded',
+          statusPagamento: 'reembolsado',
+          refundStatus: 'REEMBOLSADO',
+          refundId: approvedRefund?.id ? String(approvedRefund.id) : (order.refundId || undefined),
+          refundedAt: approvedRefund?.date_created || order.refundedAt || new Date().toISOString(),
+          refundAmount: Number(approvedRefund?.amount || paymentInfo.transaction_amount_refunded || order.total),
+          refundError: null,
+        };
+
+        await saveOrderUpdates(order.id, successData);
+        console.log(`[Reconciliação MP Success] Pedido #${order.id} confirmado como REEMBOLSADO no Mercado Pago!`);
+        return {
+          reconciled: true,
+          status: 'REEMBOLSADO',
+          order: { ...order, ...successData },
+        };
+      }
+
+      // Check if refund is still actively pending in Mercado Pago
+      const hasAnyRefund = Array.isArray(paymentInfo.refunds) && paymentInfo.refunds.length > 0;
+      const isPendingInMp = hasAnyRefund && paymentInfo.refunds.some((r: any) => r.status === 'pending');
+
+      if (isPendingInMp && !options.forceTransitionIfNoRefund) {
+        console.log(`[Reconciliação MP] Reembolso do Pedido #${order.id} ainda está como 'pending' no Mercado Pago.`);
+        return {
+          reconciled: false,
+          status: 'REEMBOLSO_PROCESSANDO',
+          order,
+        };
+      }
+
+      // If Mercado Pago confirms NO refund was executed:
+      // It is completely safe to transition to FALHA_NO_REEMBOLSO
+      const rawError = order.refundError || 'Tentativa anterior não efetuou o estorno no Mercado Pago.';
+      const humanized = humanizeMercadoPagoError(rawError);
+      const failData: any = {
+        status: 'refused',
+        refundStatus: 'FALHA_NO_REEMBOLSO',
+        refundError: humanized,
+      };
+
+      await saveOrderUpdates(order.id, failData);
+      console.log(`[Reconciliação MP Reconciled] Pedido #${order.id} verificado no MP: sem estorno efetuado. Atualizado para FALHA_NO_REEMBOLSO para liberar botão de retentativa.`);
+      return {
+        reconciled: true,
+        status: 'FALHA_NO_REEMBOLSO',
+        order: { ...order, ...failData },
+        error: humanized,
+      };
+    } catch (queryErr: any) {
+      console.error(`[Reconciliação MP Error] Falha ao consultar Mercado Pago para Pagamento #${paymentId}:`, queryErr);
+      // Se não for possível determinar com segurança o estado real:
+      // manter REEMBOLSO_PROCESSANDO; não iniciar outro estorno automaticamente;
+      return {
+        reconciled: false,
+        status: order.refundStatus || 'REEMBOLSO_PROCESSANDO',
+        order,
+        error: queryErr?.message || 'Falha na comunicação com o Mercado Pago',
+      };
+    }
+  }
+
+  // POST /api/orders/:orderId/refuse (Order Refusal with Mercado Pago Real Refund)
+  app.post('/api/orders/:orderId/refuse', async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { motivoRecusa } = req.body;
+
+      if (!motivoRecusa || typeof motivoRecusa !== 'string' || !motivoRecusa.trim()) {
+        return res.status(400).json({ error: 'O motivo da recusa é obrigatório.' });
+      }
+
+      console.log(`[Order Refusal] Iniciando recusa do Pedido #${orderId}. Motivo: ${motivoRecusa}`);
+      let order = await getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({ error: 'Pedido não encontrado.' });
+      }
+
+      // 1. If already marked as refunded in DB, never execute another refund
+      if (order.refundStatus === 'REEMBOLSADO') {
+        return res.status(400).json({
+          error: 'Este pedido já foi recusado e estornado anteriormente no Mercado Pago.',
+          order,
+        });
+      }
+
+      const isOnlinePayment = order.paymentMethod === 'mercadopago';
+      const isPaid =
+        order.paymentStatus === 'paid' ||
+        order.statusPagamento === 'pago' ||
+        order.payment_status === 'paid' ||
+        order.mercadopagoStatus === 'approved' ||
+        order.mercadopago_status === 'approved';
+
+      // CASE 1: Offline Payment or Unpaid Order (Cash, Card on delivery, Card at counter, or unpaid online)
+      if (!isOnlinePayment || !isPaid) {
+        const updateData: any = {
+          status: 'refused',
+          motivoRecusa: motivoRecusa.trim(),
+        };
+        await saveOrderUpdates(orderId, updateData);
+        console.log(`[Order Refusal] Pedido presencial/não-pago #${orderId} recusado com sucesso.`);
+        return res.json({
+          success: true,
+          refunded: false,
+          message: 'Pedido recusado com sucesso.',
+          order: { ...order, ...updateData },
+        });
+      }
+
+      // CASE 2: Online Payment CONFIRMED as PAID (Mercado Pago)
+      const paymentId = order.mercadopagoPaymentId || order.mercadopago_payment_id;
+      if (!paymentId) {
+        const failData: any = {
+          status: 'refused',
+          motivoRecusa: motivoRecusa.trim(),
+          refundStatus: 'FALHA_NO_REEMBOLSO',
+          refundError: 'ID do pagamento Mercado Pago não localizado no registro do pedido.',
+        };
+        await saveOrderUpdates(orderId, failData);
+        return res.status(200).json({
+          success: false,
+          refunded: false,
+          refundStatus: 'FALHA_NO_REEMBOLSO',
+          error: failData.refundError,
+          order: { ...order, ...failData },
+        });
+      }
+
+      // 3. If refundStatus === "REEMBOLSO_PROCESSANDO":
+      // Do NOT execute immediately another refund! Consult real state in Mercado Pago first.
+      if (order.refundStatus === 'REEMBOLSO_PROCESSANDO') {
+        const reconciliation = await reconcileOrderRefundWithMercadoPago(order);
+        if (reconciliation.status === 'REEMBOLSADO') {
+          return res.json({
+            success: true,
+            refunded: true,
+            message: 'Reembolso confirmado no Mercado Pago.',
+            order: reconciliation.order,
+          });
+        }
+        if (reconciliation.status === 'REEMBOLSO_PROCESSANDO') {
+          return res.status(409).json({
+            error: 'O reembolso ainda está sendo processado pelo Mercado Pago. Aguarde alguns instantes.',
+            order: reconciliation.order,
+          });
+        }
+        order = reconciliation.order;
+      }
+
+      // Pre-check: verify if already refunded on Mercado Pago
+      const preCheck = await reconcileOrderRefundWithMercadoPago(order);
+      if (preCheck.status === 'REEMBOLSADO') {
+        return res.json({
+          success: true,
+          refunded: true,
+          message: 'Reembolso já confirmado anteriormente no Mercado Pago.',
+          order: preCheck.order,
+        });
+      }
+
+      // Mark as REEMBOLSO_PROCESSANDO with timestamp before calling external API to prevent duplicate clicks
+      await saveOrderUpdates(orderId, {
+        status: 'refused',
+        motivoRecusa: motivoRecusa.trim(),
+        refundStatus: 'REEMBOLSO_PROCESSANDO',
+        refundProcessingStartedAt: new Date().toISOString(),
+      });
+
+      console.log(`[Mercado Pago Refund] Solicitando reembolso total do Pagamento #${paymentId} para Pedido #${orderId}...`);
+
+      let refundResponse: any = null;
+      try {
+        refundResponse = await mpRefund.total({
+          payment_id: String(paymentId),
+          requestOptions: {
+            idempotencyKey: `refund-${orderId}-${paymentId}`,
+          },
+        });
+        console.log(`[Mercado Pago Refund Success] Resposta MP #${paymentId}:`, JSON.stringify(refundResponse));
+      } catch (refundErr: any) {
+        const errDetails = refundErr?.cause?.[0]?.description || refundErr?.message || String(refundErr);
+        console.error(`[Mercado Pago Refund Failed] Erro ao estornar Pagamento #${paymentId}:`, errDetails);
+
+        // Verification & Safe Recovery: Check if MP actually processed or if it was already refunded
+        const postCheck = await reconcileOrderRefundWithMercadoPago(
+          { ...order, refundError: errDetails },
+          { forceTransitionIfNoRefund: true }
+        );
+
+        if (postCheck.status === 'REEMBOLSADO') {
+          return res.json({
+            success: true,
+            refunded: true,
+            message: 'Reembolso confirmado com sucesso no Mercado Pago.',
+            order: postCheck.order,
+          });
+        }
+
+        const humanized = humanizeMercadoPagoError(errDetails);
+        const failData = {
+          status: 'refused',
+          motivoRecusa: motivoRecusa.trim(),
+          refundStatus: 'FALHA_NO_REEMBOLSO',
+          refundError: humanized,
+        };
+        await saveOrderUpdates(orderId, failData);
+
+        return res.status(200).json({
+          success: false,
+          refunded: false,
+          refundStatus: 'FALHA_NO_REEMBOLSO',
+          error: humanized,
+          order: { ...order, ...failData },
+        });
+      }
+
+      // Success: Refund confirmed by Mercado Pago
+      const successData: any = {
+        status: 'refused',
+        motivoRecusa: motivoRecusa.trim(),
+        paymentStatus: 'refunded',
+        statusPagamento: 'reembolsado',
+        refundStatus: 'REEMBOLSADO',
+        refundId: refundResponse?.id ? String(refundResponse.id) : undefined,
+        refundedAt: new Date().toISOString(),
+        refundAmount: Number(refundResponse?.amount || order.total),
+        refundError: null,
+      };
+
+      await saveOrderUpdates(orderId, successData);
+      console.log(`[Order Refusal Complete] Pedido #${orderId} recusado e estornado com sucesso (Refund ID: ${successData.refundId}).`);
+
+      return res.json({
+        success: true,
+        refunded: true,
+        message: 'Pedido recusado e reembolso aprovado com sucesso no Mercado Pago.',
+        order: { ...order, ...successData },
+      });
+    } catch (err: any) {
+      console.error('[Order Refusal Internal Error]:', err);
+      return res.status(500).json({ error: err?.message || 'Erro interno ao recusar pedido.' });
+    }
+  });
+
+  // POST /api/orders/:orderId/retry-refund (Retry Failed Refund with Safe Reconciliation)
+  app.post('/api/orders/:orderId/retry-refund', async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      let order = await getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({ error: 'Pedido não encontrado.' });
+      }
+
+      // 1. If refundStatus === "REEMBOLSADO": Never execute another refund
+      if (order.refundStatus === 'REEMBOLSADO') {
+        return res.status(400).json({ error: 'Este pedido já está com reembolso confirmado.', order });
+      }
+
+      const paymentId = order.mercadopagoPaymentId || order.mercadopago_payment_id;
+      if (!paymentId) {
+        return res.status(400).json({ error: 'ID de pagamento Mercado Pago não encontrado no pedido.' });
+      }
+
+      // 2. If refundStatus === "REEMBOLSO_PROCESSANDO":
+      // Do NOT execute immediately another refund; consult Mercado Pago first!
+      if (order.refundStatus === 'REEMBOLSO_PROCESSANDO') {
+        console.log(`[Retry-Refund] Pedido #${orderId} está em REEMBOLSO_PROCESSANDO. Verificando estado real no Mercado Pago antes de qualquer ação...`);
+        const rec = await reconcileOrderRefundWithMercadoPago(order, { forceTransitionIfNoRefund: true });
+        if (rec.status === 'REEMBOLSADO') {
+          return res.json({
+            success: true,
+            order: rec.order,
+            message: 'Reembolso já confirmado anteriormente no Mercado Pago.',
+          });
+        }
+        if (rec.status === 'REEMBOLSO_PROCESSANDO') {
+          return res.status(409).json({
+            error: 'O reembolso ainda está sendo processado pelo Mercado Pago. Aguarde alguns instantes.',
+            order: rec.order,
+          });
+        }
+        // Safely transitioned to FALHA_NO_REEMBOLSO: return updated order so the merchant can review and retry
+        return res.json({
+          success: false,
+          order: rec.order,
+          message: 'Status sincronizado: Reembolso anterior não foi concluído no Mercado Pago. O botão para tentar novamente foi liberado.',
+        });
+      }
+
+      // 3. Pre-check: double-check if already refunded on Mercado Pago
+      const preCheck = await reconcileOrderRefundWithMercadoPago(order);
+      if (preCheck.status === 'REEMBOLSADO') {
+        return res.json({
+          success: true,
+          order: preCheck.order,
+          message: 'Reembolso já confirmado anteriormente no Mercado Pago.',
+        });
+      }
+
+      // 4. Mark as REEMBOLSO_PROCESSANDO with timestamp before calling external API
+      await saveOrderUpdates(orderId, {
+        refundStatus: 'REEMBOLSO_PROCESSANDO',
+        refundProcessingStartedAt: new Date().toISOString(),
+      });
+
+      try {
+        const refundResponse = await mpRefund.total({
+          payment_id: String(paymentId),
+          requestOptions: {
+            idempotencyKey: `retry-refund-${orderId}-${paymentId}-${Date.now()}`,
+          },
+        });
+
+        const successData: any = {
+          paymentStatus: 'refunded',
+          statusPagamento: 'reembolsado',
+          refundStatus: 'REEMBOLSADO',
+          refundId: refundResponse?.id ? String(refundResponse.id) : undefined,
+          refundedAt: new Date().toISOString(),
+          refundAmount: Number(refundResponse?.amount || order.total),
+          refundError: null,
+        };
+
+        await saveOrderUpdates(orderId, successData);
+        return res.json({ success: true, order: { ...order, ...successData } });
+      } catch (err: any) {
+        const errDetails = err?.cause?.[0]?.description || err?.message || String(err);
+        console.error(`[Retry-Refund Failed] Erro ao retentar estorno #${paymentId}:`, errDetails);
+
+        // Verification & Safe Recovery: Check if MP actually refunded
+        const postCheck = await reconcileOrderRefundWithMercadoPago(
+          { ...order, refundError: errDetails },
+          { forceTransitionIfNoRefund: true }
+        );
+
+        if (postCheck.status === 'REEMBOLSADO') {
+          return res.json({ success: true, order: postCheck.order });
+        }
+
+        const humanized = humanizeMercadoPagoError(errDetails);
+        const failData = {
+          refundStatus: 'FALHA_NO_REEMBOLSO',
+          refundError: humanized,
+        };
+        await saveOrderUpdates(orderId, failData);
+        return res.status(200).json({ success: false, error: humanized, order: { ...order, ...failData } });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro interno ao reprocessar reembolso.' });
+    }
+  });
+
+  // POST /api/orders/:orderId/reconcile-refund (Explicit Safe Reconciliation without executing new refund)
+  app.post('/api/orders/:orderId/reconcile-refund', async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const order = await getOrderById(orderId);
+      if (!order) {
+        return res.status(404).json({ error: 'Pedido não encontrado.' });
+      }
+      const result = await reconcileOrderRefundWithMercadoPago(order, { forceTransitionIfNoRefund: true });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'Erro ao reconciliar estorno.' });
     }
   });
 
@@ -573,23 +1101,34 @@ async function startServer() {
           const currentOrder = orderSnap.data();
 
           if (status === 'approved') {
-            await updateDoc(orderRef, {
-              paymentStatus: 'paid',
-              statusPagamento: 'pago',
-              // Switch status to 'pending' when paid so restaurant can accept or refuse
-              status: currentOrder.status === 'awaiting_payment' ? 'pending' : currentOrder.status,
-              paidAt: new Date().toISOString(),
-              mercadopagoPaymentId: String(paymentId),
-              mercadopagoStatus: status,
-              mercadopagoPaymentMethod: paymentInfo.payment_method_id,
-            });
+            const nextStatus = (currentOrder.status === 'awaiting_payment' || !currentOrder.status)
+              ? 'pending'
+              : currentOrder.status;
+
+            await setDoc(
+              orderRef,
+              cleanFirestoreData({
+                paymentStatus: 'paid',
+                statusPagamento: 'pago',
+                status: nextStatus,
+                paidAt: new Date().toISOString(),
+                mercadopagoPaymentId: String(paymentId),
+                mercadopagoStatus: status,
+                mercadopagoPaymentMethod: paymentInfo.payment_method_id,
+              }),
+              { merge: true }
+            );
             console.log(`[Webhook Success] Pedido #${orderId} atualizado para 'PAGO' e enviado para o restaurante aceitar!`);
           } else {
-            await updateDoc(orderRef, {
-              mercadopagoPaymentId: String(paymentId),
-              mercadopagoStatus: status,
-              mercadopagoPaymentMethod: paymentInfo.payment_method_id,
-            });
+            await setDoc(
+              orderRef,
+              cleanFirestoreData({
+                mercadopagoPaymentId: String(paymentId),
+                mercadopagoStatus: status,
+                mercadopagoPaymentMethod: paymentInfo.payment_method_id,
+              }),
+              { merge: true }
+            );
           }
         } else {
           console.warn(`[Webhook Warning] Pedido #${orderId} não encontrado no Firestore.`);
@@ -648,13 +1187,21 @@ async function startServer() {
         if (orderSnap.exists()) {
           const currentOrder = orderSnap.data();
           if (currentOrder.paymentStatus !== 'paid') {
-            await updateDoc(orderRef, {
-              paymentStatus: 'paid',
-              statusPagamento: 'pago',
-              status: currentOrder.status === 'awaiting_payment' ? 'pending' : currentOrder.status,
-              paidAt: new Date().toISOString(),
-              mercadopagoStatus: 'approved',
-            });
+            const nextStatus = (currentOrder.status === 'awaiting_payment' || !currentOrder.status)
+              ? 'pending'
+              : currentOrder.status;
+
+            await setDoc(
+              orderRef,
+              cleanFirestoreData({
+                paymentStatus: 'paid',
+                statusPagamento: 'pago',
+                status: nextStatus,
+                paidAt: new Date().toISOString(),
+                mercadopagoStatus: 'approved',
+              }),
+              { merge: true }
+            );
           }
         }
       }
