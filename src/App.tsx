@@ -7,6 +7,7 @@ import BottomNav from './components/BottomNav';
 import AuthModal from './components/AuthModal';
 import MotoboyOrderNotification from './components/MotoboyOrderNotification';
 import InstallAppPrompt from './components/InstallAppPrompt';
+import WelcomeLanding from './components/WelcomeLanding';
 import Home from './pages/Home';
 import Menu from './pages/Menu';
 import Cart from './pages/Cart';
@@ -18,7 +19,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Settings } from 'lucide-react';
 
 function AppContent() {
-  const { activeView, setActiveView, settings } = useApp();
+  const { activeView, setActiveView, settings, hasEnteredDelivery, setHasEnteredDelivery } = useApp();
   const { user, profile, isAuthOpen, setIsAuthOpen, logout } = useAuth();
 
   // Maintenance mode check: active settings with maintenanceMode enabled, and user is not an admin/superadmin
@@ -71,6 +72,21 @@ function AppContent() {
           </div>
         </div>
 
+        <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
+      </div>
+    );
+  }
+
+  // Step 1: Presentation / Welcome Landing screen for initial customer entry
+  if (!hasEnteredDelivery && activeView === 'home') {
+    return (
+      <div className="relative mx-auto min-h-screen w-full max-w-lg shadow-2xl flex flex-col bg-gray-950">
+        <WelcomeLanding
+          onEnterDelivery={() => {
+            setHasEnteredDelivery(true);
+            setActiveView('home');
+          }}
+        />
         <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
       </div>
     );
@@ -130,10 +146,10 @@ function AppContent() {
         <AnimatePresence mode="wait">
           <motion.div
             key={activeView}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            transition={{ duration: 0.25, ease: 'easeInOut' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
             className="flex-1 flex flex-col"
           >
             {renderActiveView()}
@@ -162,7 +178,7 @@ export default function App() {
       <AppProvider>
         <CartProvider>
           <div 
-            className="min-h-screen w-full relative overflow-hidden flex items-center justify-center transition-colors duration-300"
+            className="min-h-screen w-full relative overflow-x-clip flex items-center justify-center transition-colors duration-300"
             style={{ backgroundColor: 'var(--site-bg-color, #fff7f4)' }}
           >
             {/* Background blurred orbs */}

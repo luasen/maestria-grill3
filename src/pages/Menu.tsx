@@ -3,14 +3,14 @@ import { Search, BookOpen, ShoppingBag } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useCart } from '../contexts/CartContext';
 import ProductCard from '../components/ProductCard';
-import PromoBanner from '../components/PromoBanner';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Menu() {
-  const { products, categories, isLoading } = useApp();
+  const { products, categories, isLoading, selectedCategory, setSelectedCategory } = useApp();
   const { totalItems, total } = useCart();
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
+
+  const selectedCategoryId = selectedCategory || 'all';
 
   // Filter products by category and search term
   const filteredProducts = useMemo(() => {
@@ -25,7 +25,7 @@ export default function Menu() {
   return (
     <div className="min-h-screen bg-transparent pb-32">
       {/* Search Header Banner */}
-      <div className="bg-white/20 backdrop-blur-md px-4 py-4 border-b border-white/20">
+      <div className="bg-white/40 backdrop-blur-md px-4 py-3.5 border-b border-orange-100/50">
         <div className="mx-auto max-w-lg">
           <div className="relative">
             <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -35,23 +35,23 @@ export default function Menu() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="O que você deseja comer hoje?"
-              className="w-full rounded-2xl border border-white/30 bg-white/45 py-3 pl-10 pr-4 text-xs font-medium text-gray-800 placeholder-gray-400 outline-none ring-orange-500/25 transition focus:border-orange-500 focus:bg-white/75 focus:ring-4"
+              className="w-full rounded-2xl border border-orange-100/80 bg-white/90 py-2.5 pl-10 pr-4 text-xs font-medium text-gray-800 placeholder-gray-400 outline-none shadow-xs transition-all focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-500/15"
             />
           </div>
         </div>
       </div>
 
-      {/* Categories Horizontal Scroll */}
-      <div className="sticky top-[64px] z-20 border-b border-white/20 bg-white/25 backdrop-blur-md">
-        <div className="mx-auto max-w-lg px-4 py-3.5 overflow-x-auto scrollbar-none flex gap-2">
+      {/* Sticky Categories Horizontal Scroll */}
+      <div className="sticky top-16 z-30 border-b border-orange-100/80 bg-white/95 backdrop-blur-xl shadow-xs">
+        <div className="mx-auto max-w-lg px-4 py-3 overflow-x-auto scrollbar-none flex gap-2">
           {/* "Tudo" tab */}
           <button
             id="cat-tab-all"
-            onClick={() => setSelectedCategoryId('all')}
-            className={`flex-shrink-0 rounded-full px-4.5 py-2 text-xs font-bold transition-all ${
+            onClick={() => setSelectedCategory('all')}
+            className={`flex-shrink-0 rounded-full px-4.5 py-2 text-xs font-bold transition-all cursor-pointer ${
               selectedCategoryId === 'all'
-                ? 'bg-orange-600 text-white shadow-sm shadow-orange-600/10'
-                : 'bg-white/40 border border-white/30 text-gray-600 hover:bg-white/60'
+                ? 'bg-orange-600 text-white shadow-sm shadow-orange-600/20'
+                : 'bg-white border border-gray-200/90 text-gray-700 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200'
             }`}
           >
             Tudo
@@ -62,11 +62,11 @@ export default function Menu() {
             <button
               key={cat.id}
               id={`cat-tab-${cat.id}`}
-              onClick={() => setSelectedCategoryId(cat.id)}
-              className={`flex-shrink-0 rounded-full px-4.5 py-2 text-xs font-bold transition-all ${
+              onClick={() => setSelectedCategory(cat.id)}
+              className={`flex-shrink-0 rounded-full px-4.5 py-2 text-xs font-bold transition-all cursor-pointer ${
                 selectedCategoryId === cat.id
-                  ? 'bg-orange-600 text-white shadow-sm shadow-orange-600/10'
-                  : 'bg-white/40 border border-white/30 text-gray-600 hover:bg-white/60'
+                  ? 'bg-orange-600 text-white shadow-sm shadow-orange-600/20'
+                  : 'bg-white border border-gray-200/90 text-gray-700 hover:bg-orange-50 hover:text-orange-600 hover:border-orange-200'
               }`}
             >
               {cat.name}
@@ -77,8 +77,6 @@ export default function Menu() {
 
       {/* Products Grid list */}
       <div className="mx-auto max-w-lg px-4 py-5">
-        <PromoBanner className="mb-4" />
-
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-orange-500 border-t-transparent"></div>

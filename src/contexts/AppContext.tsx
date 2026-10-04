@@ -32,6 +32,10 @@ interface AppContextType {
   updateUserProfile: (uid: string, fields: Partial<UserProfile>) => Promise<void>;
   refuseOrder: (id: string, motivoRecusa: string) => Promise<Order>;
   retryRefund: (id: string) => Promise<Order>;
+  selectedCategory: string;
+  setSelectedCategory: (id: string) => void;
+  hasEnteredDelivery: boolean;
+  setHasEnteredDelivery: (entered: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -44,6 +48,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<RestaurantSettings | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>('home');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [hasEnteredDelivery, setHasEnteredDeliveryState] = useState<boolean>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('orderId') || params.get('payment') || window.location.hash) {
+          return true;
+        }
+        return sessionStorage.getItem('maestria_entered') === 'true';
+      }
+    } catch {}
+    return false;
+  });
+
+  const setHasEnteredDelivery = (entered: boolean) => {
+    setHasEnteredDeliveryState(entered);
+    try {
+      if (entered) {
+        sessionStorage.setItem('maestria_entered', 'true');
+      } else {
+        sessionStorage.removeItem('maestria_entered');
+      }
+    } catch {}
+  };
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -355,6 +383,10 @@ function mergeOrdersPreservingProgression(prevOrders: Order[], incomingOrders: O
         updateUserProfile: handleUpdateUserProfile,
         refuseOrder: handleRefuseOrder,
         retryRefund: handleRetryRefund,
+        selectedCategory,
+        setSelectedCategory,
+        hasEnteredDelivery,
+        setHasEnteredDelivery,
       }}
     >
       {children}

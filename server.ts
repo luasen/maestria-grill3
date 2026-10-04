@@ -4,10 +4,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { MercadoPagoConfig, Payment, Preference, PaymentRefund } from 'mercadopago';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { createClient } from '@supabase/supabase-js';
-import firebaseConfig from './firebase-applet-config.json' assert { type: 'json' };
 
 // Initialize Supabase Server Client
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
@@ -15,20 +12,6 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabaseServer = SUPABASE_URL.startsWith('https://') && SUPABASE_ANON_KEY
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
-
-const firebaseServerApp = initializeApp(firebaseConfig, 'server-app');
-const db = getFirestore(firebaseServerApp, firebaseConfig.firestoreDatabaseId);
-
-// Helper to remove any undefined fields before writing to Firestore
-function cleanFirestoreData<T extends Record<string, any>>(data: T): Partial<T> {
-  const cleaned: Record<string, any> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined) {
-      cleaned[key] = value;
-    }
-  }
-  return cleaned as Partial<T>;
-}
 
 // Environment setup for Mercado Pago Credentials
 const MERCADOPAGO_ACCESS_TOKEN =
@@ -112,74 +95,6 @@ async function startServer() {
     }
   });
 
-  // Seed initial Firestore collections and default configs if empty
-  app.post('/api/database/seed', async (req, res) => {
-    try {
-      const settingsRef = doc(db, 'settings', 'main');
-      const settingsSnap = await getDoc(settingsRef);
-      if (!settingsSnap.exists()) {
-        await updateDoc(settingsRef, {
-          name: 'Maestria Grill',
-          description: 'O autêntico sabor da brasa com carnes nobres grelhadas com perfeição e paixão em servir.',
-          logoUrl: '🥩',
-          deliveryFee: 7.00,
-          phone: '(11) 99999-8888',
-          address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
-          whatsapp: '(11) 99999-8888',
-          instagram: '@maestriagrill',
-          email: 'contato@maestriagrill.com.br',
-          horarioFuncionamento: 'Segunda a Sábado, das 18h às 23h30',
-          minOrderValue: 30.00,
-          maxDeliveryDistance: 10,
-          avgDeliveryTime: '35 - 50 min',
-          avgPickupTime: '15 - 25 min',
-          allowPickup: true,
-          allowDelivery: true,
-          paymentPix: true,
-          paymentCash: true,
-          paymentCreditCard: true,
-          paymentDebitCard: true,
-          primaryColor: '#ea580c',
-          secondaryColor: '#f97316',
-          backgroundColor: '#fff7f4',
-          maintenanceMode: false
-        }).catch(async () => {
-          // If update fails because doc doesn't exist, use setDoc
-          const { setDoc } = await import('firebase/firestore');
-          await setDoc(settingsRef, {
-            name: 'Maestria Grill',
-            description: 'O autêntico sabor da brasa com carnes nobres grelhadas com perfeição e paixão em servir.',
-            logoUrl: '🥩',
-            deliveryFee: 7.00,
-            phone: '(11) 99999-8888',
-            address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
-            whatsapp: '(11) 99999-8888',
-            instagram: '@maestriagrill',
-            email: 'contato@maestriagrill.com.br',
-            horarioFuncionamento: 'Segunda a Sábado, das 18h às 23h30',
-            minOrderValue: 30.00,
-            maxDeliveryDistance: 10,
-            avgDeliveryTime: '35 - 50 min',
-            avgPickupTime: '15 - 25 min',
-            allowPickup: true,
-            allowDelivery: true,
-            paymentPix: true,
-            paymentCash: true,
-            paymentCreditCard: true,
-            paymentDebitCard: true,
-            primaryColor: '#ea580c',
-            secondaryColor: '#f97316',
-            backgroundColor: '#fff7f4',
-            maintenanceMode: false
-          });
-        });
-      }
-      return res.json({ success: true, message: 'Banco de dados configurado com sucesso!' });
-    } catch (e: any) {
-      console.error('[DB Seed Error]:', e);
-      return res.status(500).json({ error: e?.message || 'Falha ao inicializar dados' });
-    }
-  });
 
   // Health check
   app.get('/api/health', (req, res) => {
@@ -259,34 +174,35 @@ async function startServer() {
         `[Mercado Pago API] Resposta Pagamento #${paymentResponse.id}: Status ${paymentResponse.status}`
       );
 
-      // If approved immediately (e.g. Credit/Debit Card or Mercado Pago Balance)
-      if (paymentResponse.status === 'approved') {
+      // Persist Mercado Pago payment result directly in Supabase
+      if (supabaseServer) {
         try {
-          const orderRef = doc(db, 'orders', String(orderData.id));
-          await setDoc(orderRef, cleanFirestoreData({
-            paymentStatus: 'paid',
-            statusPagamento: 'pago',
-            status: 'pending', // Move to pending so restaurant can accept or refuse
-            paidAt: new Date().toISOString(),
-            mercadopagoPaymentId: String(paymentResponse.id),
-            mercadopagoStatus: paymentResponse.status,
-            mercadopagoPaymentMethod: paymentResponse.payment_method_id,
-          }), { merge: true });
-          console.log(`[Firestore] Pedido #${orderData.id} pago! Status alterado para 'pending' (Aguardando aceite do restaurante).`);
+          const updatePayload: any = {
+            mercadopago_payment_id: String(paymentResponse.id),
+            mercadopago_status: paymentResponse.status,
+          };
+
+          if (paymentResponse.status === 'approved') {
+            updatePayload.payment_status = 'paid';
+            updatePayload.status = 'pending'; // Move to pending so restaurant can accept or refuse
+          } else if (paymentResponse.status === 'in_process' || paymentResponse.status === 'pending') {
+            updatePayload.payment_status = 'pending';
+          } else if (paymentResponse.status === 'rejected' || paymentResponse.status === 'cancelled') {
+            updatePayload.payment_status = 'failed';
+          }
+
+          const { error: sbErr } = await supabaseServer
+            .from('orders')
+            .update(updatePayload)
+            .eq('id', String(orderData.id));
+
+          if (sbErr) {
+            console.error(`[Supabase Error] Erro ao atualizar pedido #${orderData.id} com pagamento por cartão:`, sbErr);
+          } else {
+            console.log(`[Supabase] Pedido #${orderData.id} atualizado com status MP: ${paymentResponse.status}`);
+          }
         } catch (dbErr) {
-          console.error(`[Firestore Error] Erro ao atualizar pedido #${orderData.id}:`, dbErr);
-        }
-      } else {
-        // Save Mercado Pago payment ID to order in Firestore for webhook tracking
-        try {
-          const orderRef = doc(db, 'orders', String(orderData.id));
-          await setDoc(orderRef, cleanFirestoreData({
-            mercadopagoPaymentId: String(paymentResponse.id),
-            mercadopagoStatus: paymentResponse.status,
-            mercadopagoPaymentMethod: paymentResponse.payment_method_id,
-          }), { merge: true });
-        } catch (dbErr) {
-          console.error(`[Firestore Error] Erro ao vincular paymentId no pedido:`, dbErr);
+          console.error(`[Supabase Error] Exceção ao atualizar pedido #${orderData.id}:`, dbErr);
         }
       }
 
@@ -445,7 +361,7 @@ async function startServer() {
       const qrCodeBase64 = paymentResponse.point_of_interaction?.transaction_data?.qr_code_base64;
       const ticketUrl = paymentResponse.point_of_interaction?.transaction_data?.ticket_url;
 
-      // Save payment ID to Supabase and Firestore order record
+      // Save payment ID to Supabase order record
       if (supabaseServer) {
         try {
           await supabaseServer.from('orders').update({
@@ -455,17 +371,6 @@ async function startServer() {
         } catch (sbErr) {
           console.error(`[Supabase Error] Erro ao salvar dados do Pix no pedido #${orderData.id}:`, sbErr);
         }
-      }
-
-      try {
-        const orderRef = doc(db, 'orders', String(orderData.id));
-        await setDoc(orderRef, {
-          mercadopagoPaymentId: String(paymentResponse.id),
-          mercadopagoStatus: paymentResponse.status,
-          mercadopagoPaymentMethod: 'pix',
-        }, { merge: true });
-      } catch (dbErr) {
-        // silent or fallback
       }
 
       return res.json({
@@ -485,7 +390,7 @@ async function startServer() {
     }
   });
 
-  // Helper to fetch order from Supabase or Firestore
+  // Helper to fetch order from Supabase
   async function getOrderById(orderId: string): Promise<any | null> {
     if (supabaseServer) {
       try {
@@ -523,15 +428,6 @@ async function startServer() {
       }
     }
 
-    try {
-      const snap = await getDoc(doc(db, 'orders', String(orderId)));
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() };
-      }
-    } catch (err) {
-      console.warn('[server getOrderById Firestore warning]:', err);
-    }
-
     return null;
   }
 
@@ -552,7 +448,7 @@ async function startServer() {
     return errorMsg;
   }
 
-  // Helper to persist order updates in Supabase and Firestore
+  // Helper to persist order updates in Supabase
   async function saveOrderUpdates(orderId: string, updates: any) {
     if (supabaseServer) {
       try {
@@ -579,13 +475,6 @@ async function startServer() {
       } catch (sbErr) {
         console.error('[server saveOrderUpdates Supabase error]:', sbErr);
       }
-    }
-
-    try {
-      const orderRef = doc(db, 'orders', String(orderId));
-      await setDoc(orderRef, cleanFirestoreData(updates), { merge: true });
-    } catch (fsErr) {
-      console.error('[server saveOrderUpdates Firestore error]:', fsErr);
     }
   }
 
@@ -1079,59 +968,40 @@ async function startServer() {
 
         if (supabaseServer) {
           try {
+            const { data: currentOrder } = await supabaseServer
+              .from('orders')
+              .select('status, payment_status')
+              .eq('id', String(orderId))
+              .maybeSingle();
+
             const updatePayload: any = {
               payment_status: status === 'approved' ? 'paid' : status,
               mercadopago_status: status,
               mercadopago_payment_id: String(paymentId),
             };
+
             if (status === 'approved') {
-              updatePayload.status = 'pending';
+              // Somente avança para 'pending' se ainda estiver aguardando pagamento
+              if (!currentOrder?.status || currentOrder.status === 'awaiting_payment') {
+                updatePayload.status = 'pending';
+              }
             }
-            await supabaseServer.from('orders').update(updatePayload).eq('id', String(orderId));
-            console.log(`[Supabase Webhook Success] Pedido #${orderId} atualizado no Supabase.`);
+
+            const { error: sbErr } = await supabaseServer
+              .from('orders')
+              .update(updatePayload)
+              .eq('id', String(orderId));
+
+            if (sbErr) {
+              console.error(`[Supabase Webhook Error]:`, sbErr);
+            } else {
+              console.log(
+                `[Supabase Webhook Success] Pedido #${orderId} atualizado no Supabase (status: ${updatePayload.status || currentOrder?.status}, payment_status: ${updatePayload.payment_status}).`
+              );
+            }
           } catch (sbErr) {
-            console.error(`[Supabase Webhook Error]:`, sbErr);
+            console.error(`[Supabase Webhook Exception]:`, sbErr);
           }
-        }
-
-        const orderRef = doc(db, 'orders', String(orderId));
-        const orderSnap = await getDoc(orderRef);
-
-        if (orderSnap.exists()) {
-          const currentOrder = orderSnap.data();
-
-          if (status === 'approved') {
-            const nextStatus = (currentOrder.status === 'awaiting_payment' || !currentOrder.status)
-              ? 'pending'
-              : currentOrder.status;
-
-            await setDoc(
-              orderRef,
-              cleanFirestoreData({
-                paymentStatus: 'paid',
-                statusPagamento: 'pago',
-                status: nextStatus,
-                paidAt: new Date().toISOString(),
-                mercadopagoPaymentId: String(paymentId),
-                mercadopagoStatus: status,
-                mercadopagoPaymentMethod: paymentInfo.payment_method_id,
-              }),
-              { merge: true }
-            );
-            console.log(`[Webhook Success] Pedido #${orderId} atualizado para 'PAGO' e enviado para o restaurante aceitar!`);
-          } else {
-            await setDoc(
-              orderRef,
-              cleanFirestoreData({
-                mercadopagoPaymentId: String(paymentId),
-                mercadopagoStatus: status,
-                mercadopagoPaymentMethod: paymentInfo.payment_method_id,
-              }),
-              { merge: true }
-            );
-          }
-        } else {
-          console.warn(`[Webhook Warning] Pedido #${orderId} não encontrado no Firestore.`);
         }
       }
 
@@ -1170,38 +1040,34 @@ async function startServer() {
 
         if (supabaseServer) {
           try {
-            await supabaseServer.from('orders').update({
+            const { data: currentOrder } = await supabaseServer
+              .from('orders')
+              .select('status, payment_status')
+              .eq('id', orderId)
+              .maybeSingle();
+
+            const updatePayload: any = {
               payment_status: 'paid',
-              status: 'pending',
               mercadopago_status: 'approved',
               mercadopago_payment_id: String(paymentInfo.id),
-            }).eq('id', orderId);
-            console.log(`[Supabase Status Check] Pedido #${orderId} atualizado para 'paid' e 'pending' no Supabase.`);
+            };
+
+            if (!currentOrder?.status || currentOrder.status === 'awaiting_payment') {
+              updatePayload.status = 'pending';
+            }
+
+            const { error: sbErr } = await supabaseServer
+              .from('orders')
+              .update(updatePayload)
+              .eq('id', orderId);
+
+            if (sbErr) {
+              console.error(`[Supabase Error on Status Check]:`, sbErr);
+            } else {
+              console.log(`[Supabase Status Check] Pedido #${orderId} atualizado para 'paid' no Supabase.`);
+            }
           } catch (sbErr) {
             console.error(`[Supabase Error on Status Check]:`, sbErr);
-          }
-        }
-
-        const orderRef = doc(db, 'orders', orderId);
-        const orderSnap = await getDoc(orderRef);
-        if (orderSnap.exists()) {
-          const currentOrder = orderSnap.data();
-          if (currentOrder.paymentStatus !== 'paid') {
-            const nextStatus = (currentOrder.status === 'awaiting_payment' || !currentOrder.status)
-              ? 'pending'
-              : currentOrder.status;
-
-            await setDoc(
-              orderRef,
-              cleanFirestoreData({
-                paymentStatus: 'paid',
-                statusPagamento: 'pago',
-                status: nextStatus,
-                paidAt: new Date().toISOString(),
-                mercadopagoStatus: 'approved',
-              }),
-              { merge: true }
-            );
           }
         }
       }

@@ -6,6 +6,7 @@ import { formatPrice } from '../utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ProductCardProps {
+  key?: React.Key;
   product: Product;
 }
 
