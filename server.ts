@@ -7,11 +7,21 @@ import { MercadoPagoConfig, Payment, Preference, PaymentRefund } from 'mercadopa
 import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase Server Client
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '';
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
-const supabaseServer = SUPABASE_URL.startsWith('https://') && SUPABASE_ANON_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+// Server client: Uses privileged service_role key when available for RLS bypass, fallback to anon
+const supabaseServer = SUPABASE_URL.startsWith('https://') && (SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    })
   : null;
+
+const hasServiceRoleKey = Boolean(SUPABASE_SERVICE_ROLE_KEY);
 
 // Environment setup for Mercado Pago Credentials
 const MERCADOPAGO_ACCESS_TOKEN =
@@ -66,32 +76,89 @@ async function startServer() {
     immutable: true
   }));
 
-  // Fallback upload endpoint when Supabase Storage bucket is not yet created
+  const ALLOWED_STORAGE_BUCKETS = ['product-images', 'category-images', 'restaurant-images'];
+
+  // Status check for Supabase Storage Backend
+  app.get('/api/storage/status', (req, res) => {
+    res.json({
+      configured: Boolean(supabaseServer),
+      hasServiceRoleKey,
+      buckets: ALLOWED_STORAGE_BUCKETS,
+    });
+  });
+
+  // Secure administrative upload endpoint
   app.post('/api/storage/upload', async (req, res) => {
     try {
-      const { bucket, fileName, base64Data } = req.body;
+      const { bucket, fileName, base64Data, contentType } = req.body;
       if (!bucket || !fileName || !base64Data) {
-        return res.status(400).json({ error: 'Parâmetros incompletos para upload' });
+        return res.status(400).json({ error: 'Parâmetros incompletos para upload (bucket, fileName e base64Data são obrigatórios).' });
       }
 
-      const safeBucket = String(bucket).replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!ALLOWED_STORAGE_BUCKETS.includes(bucket)) {
+        return res.status(400).json({ error: `Bucket não permitido: ${bucket}. Buckets válidos: ${ALLOWED_STORAGE_BUCKETS.join(', ')}` });
+      }
+
+      const safeBucket = bucket;
       const safeFileName = String(fileName).replace(/[^a-zA-Z0-9_.-]/g, '');
-      const targetDir = path.join(UPLOADS_DIR, safeBucket);
-      if (!fs.existsSync(targetDir)) {
-        fs.mkdirSync(targetDir, { recursive: true });
-      }
-
-      const filePath = path.join(targetDir, safeFileName);
       const cleanBase64 = String(base64Data).replace(/^data:[^;]+;base64,/, '');
       const buffer = Buffer.from(cleanBase64, 'base64');
-      fs.writeFileSync(filePath, buffer);
+      const mime = contentType || 'image/webp';
 
-      const publicUrl = `/api/storage/files/${safeBucket}/${safeFileName}`;
-      console.log(`[Storage Fallback] Imagem gravada com sucesso em ${publicUrl}`);
-      return res.json({ publicUrl, success: true });
+      if (!supabaseServer) {
+        return res.status(503).json({
+          error: 'Cliente Supabase não inicializado no servidor. Verifique VITE_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.',
+          needConfig: true
+        });
+      }
+
+      // Upload directly to Supabase Storage with server client
+      const { data: sbData, error: sbErr } = await supabaseServer.storage
+        .from(safeBucket)
+        .upload(safeFileName, buffer, {
+          contentType: mime,
+          upsert: true,
+        });
+
+      if (sbErr) {
+        console.error('[Server Storage Supabase Upload Error]:', sbErr);
+        if (sbErr.message?.includes('row-level security') || (sbErr as any).statusCode === '403') {
+          return res.status(403).json({
+            error: 'Permissão negada no Supabase Storage: a variável SUPABASE_SERVICE_ROLE_KEY precisa ser configurada nas variáveis de ambiente do backend para permitir uploads administrativos com bypass de RLS.',
+            code: 'MISSING_SERVICE_ROLE_KEY'
+          });
+        }
+        return res.status(500).json({ error: `Erro no Supabase Storage: ${sbErr.message}` });
+      }
+
+      const { data: pubData } = supabaseServer.storage.from(safeBucket).getPublicUrl(sbData?.path || safeFileName);
+      if (!pubData?.publicUrl) {
+        return res.status(500).json({ error: 'Falha ao recuperar a URL pública do Supabase Storage.' });
+      }
+
+      console.log(`[Server Storage] Imagem gravada com sucesso no Supabase Storage: ${pubData.publicUrl}`);
+      return res.json({ publicUrl: pubData.publicUrl, success: true });
     } catch (err: any) {
-      console.error('[Storage Fallback Error]:', err);
-      return res.status(500).json({ error: err?.message || 'Falha ao salvar imagem' });
+      console.error('[Storage Error]:', err);
+      return res.status(500).json({ error: err?.message || 'Falha ao processar upload no servidor' });
+    }
+  });
+
+  // Secure administrative delete endpoint
+  app.post('/api/storage/delete', async (req, res) => {
+    try {
+      const { bucket, path: filePath } = req.body;
+      if (!bucket || !filePath || !ALLOWED_STORAGE_BUCKETS.includes(bucket)) {
+        return res.status(400).json({ error: 'Parâmetros inválidos para exclusão' });
+      }
+
+      if (supabaseServer) {
+        await supabaseServer.storage.from(bucket).remove([filePath]);
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.warn('[Storage Delete Error]:', err);
+      return res.status(500).json({ error: err?.message || 'Falha ao excluir arquivo' });
     }
   });
 

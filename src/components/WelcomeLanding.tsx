@@ -144,7 +144,7 @@ export default function WelcomeLanding({ onEnterDelivery }: WelcomeLandingProps)
       </main>
 
       {/* Bottom Floating Info Card & CTA Button */}
-      <footer className="relative z-10 w-full px-4 pb-6 pt-2 max-w-md mx-auto">
+      <footer className="relative z-10 w-full px-4 pb-24 pt-2 max-w-md mx-auto">
         <motion.div
           initial={{ y: 30, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}

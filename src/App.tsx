@@ -77,21 +77,6 @@ function AppContent() {
     );
   }
 
-  // Step 1: Presentation / Welcome Landing screen for initial customer entry
-  if (!hasEnteredDelivery && activeView === 'home') {
-    return (
-      <div className="relative mx-auto min-h-screen w-full max-w-lg shadow-2xl flex flex-col bg-gray-950">
-        <WelcomeLanding
-          onEnterDelivery={() => {
-            setHasEnteredDelivery(true);
-            setActiveView('home');
-          }}
-        />
-        <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
-      </div>
-    );
-  }
-
   // Custom header parameters based on active view
   const getHeaderProps = () => {
     switch (activeView) {
@@ -118,7 +103,16 @@ function AppContent() {
   const renderActiveView = () => {
     switch (activeView) {
       case 'home':
-        return <Home />;
+        return !hasEnteredDelivery ? (
+          <WelcomeLanding
+            onEnterDelivery={() => {
+              setHasEnteredDelivery(true);
+              setActiveView('home');
+            }}
+          />
+        ) : (
+          <Home />
+        );
       case 'menu':
         return <Menu />;
       case 'cart':
@@ -137,15 +131,17 @@ function AppContent() {
   };
 
   return (
-    <div className="relative mx-auto min-h-screen w-full max-w-lg bg-white/50 backdrop-blur-xl border-x border-white/30 shadow-2xl flex flex-col">
-      {/* Dynamic Header */}
-      <Header {...getHeaderProps()} />
+    <div className="relative mx-auto min-h-screen w-full max-w-lg bg-white/80 border-x border-orange-100/60 shadow-2xl flex flex-col">
+      {/* Dynamic Header (hidden on initial welcome screen) */}
+      {!hasEnteredDelivery && activeView === 'home' ? null : (
+        <Header {...getHeaderProps()} />
+      )}
 
       {/* Main Content Area with Transitions */}
       <main className="flex-1 flex flex-col relative">
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeView}
+            key={activeView + (hasEnteredDelivery ? '-entered' : '-welcome')}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -157,7 +153,7 @@ function AppContent() {
         </AnimatePresence>
       </main>
 
-      {/* Persistent Bottom Nav */}
+      {/* Persistent Bottom Nav - ALWAYS FIXED AT BOTTOM OF SCREEN */}
       <BottomNav />
 
       {/* Motoboy Real-time Delivery Order Popup */}
@@ -178,12 +174,12 @@ export default function App() {
       <AppProvider>
         <CartProvider>
           <div 
-            className="min-h-screen w-full relative overflow-x-clip flex items-center justify-center transition-colors duration-300"
+            className="min-h-screen w-full transition-colors duration-300"
             style={{ backgroundColor: 'var(--site-bg-color, #fff7f4)' }}
           >
             {/* Background blurred orbs */}
-            <div className="fixed top-[-10%] left-[-5%] w-[400px] h-[400px] bg-orange-200 rounded-full blur-[100px] opacity-40 pointer-events-none"></div>
-            <div className="fixed bottom-[-10%] right-[10%] w-[500px] h-[500px] bg-rose-200 rounded-full blur-[120px] opacity-35 pointer-events-none"></div>
+            <div className="fixed top-[-10%] left-[-5%] w-[400px] h-[400px] bg-orange-200 rounded-full blur-[100px] opacity-40 pointer-events-none -z-10"></div>
+            <div className="fixed bottom-[-10%] right-[10%] w-[500px] h-[500px] bg-rose-200 rounded-full blur-[120px] opacity-35 pointer-events-none -z-10"></div>
             
             <AppContent />
           </div>

@@ -159,77 +159,36 @@ export async function uploadImageToStorage(
   const randomSuffix = Math.random().toString(36).substring(2, 9);
   const fileName = `${timestamp}-${randomSuffix}.${ext}`;
 
-  // 3. Attempt direct upload to Supabase Storage if configured
-  if (isSupabaseConfigured) {
-    try {
-      // Attempt auto-create bucket if missing
-      try {
-        await supabase.storage.createBucket(bucket, {
-          public: true,
-          fileSizeLimit: 10485760, // 10MB
-        });
-      } catch {}
+  // 3. Secure backend upload (Frontend -> Backend Express -> Supabase Storage)
+  const base64Data = await blobToBase64(blob);
+  const res = await fetch('/api/storage/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      bucket,
+      fileName,
+      base64Data,
+      contentType: mimeType,
+    }),
+  });
 
-      const { data, error } = await supabase.storage
-        .from(bucket)
-        .upload(fileName, blob, {
-          contentType: mimeType,
-          cacheControl: '31536000', // 1 year cache
-          upsert: false,
-        });
+  const json = await res.json().catch(() => ({}));
 
-      if (!error && data?.path) {
-        const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(data.path);
-        if (publicData?.publicUrl) {
-          console.log(`[Supabase Storage] Imagem enviada com sucesso para ${bucket}/${data.path}:`, publicData.publicUrl);
-          return publicData.publicUrl;
-        }
-      }
-
-      if (error) {
-        console.info(`[Storage Notice] Supabase Storage (${bucket}): ${error.message || 'Bucket pendente de provisionamento'}`);
-      }
-    } catch (sbErr) {
-      console.info(`[Storage Notice] Tentando rota de armazenamento resiliente:`, sbErr);
-    }
+  if (!res.ok || !json.publicUrl) {
+    const errorMsg = json.error || 'Falha ao processar o upload da imagem no Supabase Storage.';
+    console.error('[Upload to Storage Error]:', errorMsg);
+    throw new Error(errorMsg);
   }
 
-  // 4. Resilient Fallback: Upload to application server storage endpoint
-  try {
-    const base64Data = await blobToBase64(blob);
-    const res = await fetch('/api/storage/upload', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        bucket,
-        fileName,
-        base64Data,
-        contentType: mimeType,
-      }),
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json.publicUrl) {
-        console.log(`[Storage Resiliente] Imagem salva com sucesso:`, json.publicUrl);
-        return json.publicUrl;
-      }
-    }
-  } catch (apiErr) {
-    console.warn('[Storage API Notice]:', apiErr);
-  }
-
-  // 5. Ultimate Fallback: Compact WebP Data URL
-  const fallbackDataUrl = await blobToBase64(blob);
-  console.log('[Storage Resiliente] Imagem otimizada pronta para uso');
-  return fallbackDataUrl;
+  console.log(`[Supabase Storage] Imagem salva com sucesso:`, json.publicUrl);
+  return json.publicUrl;
 }
 
 /**
  * Extracts the storage file path from a Storage public URL.
- * Handles both Supabase Storage URLs and local resilient storage URLs.
+ * Handles Supabase Storage URLs and legacy URLs.
  */
 export function extractStoragePath(urlOrPath: string, bucket: StorageBucket): string | null {
   if (!urlOrPath || typeof urlOrPath !== 'string') return null;
@@ -260,37 +219,33 @@ export function extractStoragePath(urlOrPath: string, bucket: StorageBucket): st
 }
 
 /**
- * Removes an image from Supabase Storage when replaced or deleted.
- * Prevents orphan files in the storage bucket.
+ * Removes an image from Supabase Storage when replaced or deleted via secure backend.
  */
 export async function deleteImageFromStorage(
   urlOrPath: string,
   bucket: StorageBucket
 ): Promise<boolean> {
-  if (!isSupabaseConfigured || !urlOrPath) return false;
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {
-    console.warn('[Supabase Storage] Operação abortada: usuário não autenticado.');
-    return false;
-  }
+  if (!urlOrPath) return false;
 
   const filePath = extractStoragePath(urlOrPath, bucket);
   if (!filePath) {
-    // URL does not belong to this Supabase Storage bucket (e.g. external unsplash link), ignore
     return false;
   }
 
   try {
-    const { error } = await supabase.storage.from(bucket).remove([filePath]);
-    if (error) {
-      console.warn(`[Supabase Storage] Falha ao excluir arquivo '${filePath}' do bucket '${bucket}':`, error.message);
-      return false;
-    }
-    console.log(`[Supabase Storage] Imagem antiga '${filePath}' removida com sucesso do bucket '${bucket}'.`);
-    return true;
+    const res = await fetch('/api/storage/delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        bucket,
+        path: filePath,
+      }),
+    });
+    return res.ok;
   } catch (err) {
-    console.warn(`[Supabase Storage] Exceção ao excluir imagem do bucket '${bucket}':`, err);
+    console.warn(`[Storage Delete Warning]:`, err);
     return false;
   }
 }

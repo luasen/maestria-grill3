@@ -83,8 +83,22 @@ GRANT EXECUTE ON FUNCTION public.is_admin_user() TO authenticated, anon;
 -- 4. POLÍTICAS ROW LEVEL SECURITY (RLS) PARA storage.objects
 -- ------------------------------------------------------------------------------
 
--- POLÍTICA 1: LEITURA PÚBLICA (SELECT)
--- Qualquer visitante, cliente ou motoboy pode visualizar fotos de produtos, categorias e banners.
+-- Limpeza rigorosa de todas as políticas de escrita públicas ou legadas
+DROP POLICY IF EXISTS "Public Read Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Admin Upload Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Admin Update Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Admin Delete Image Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Upload Maestria Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Update Maestria Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Delete Maestria Buckets" ON storage.objects;
+DROP POLICY IF EXISTS "Public read storage" ON storage.objects;
+DROP POLICY IF EXISTS "Allow upload storage" ON storage.objects;
+DROP POLICY IF EXISTS "Allow update storage" ON storage.objects;
+DROP POLICY IF EXISTS "Allow delete storage" ON storage.objects;
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
+
+-- POLÍTICA ÚNICA: LEITURA PÚBLICA (SELECT)
+-- Clientes, visitantes e aplicativo podem visualizar livremente as fotos dos pratos, categorias e banner.
 CREATE POLICY "Public Read Image Buckets"
 ON storage.objects FOR SELECT
 TO public
@@ -92,65 +106,9 @@ USING (
   bucket_id IN ('product-images', 'category-images', 'restaurant-images')
 );
 
--- POLÍTICA 2: UPLOAD / INSERÇÃO (INSERT)
--- Apenas usuários autenticados cuja role em public.profiles seja 'admin' ou 'superadmin'.
--- Clientes, motoboys e anônimos são ESTRITAMENTE BLOQUEADOS.
-CREATE POLICY "Admin Upload Image Buckets"
-ON storage.objects FOR INSERT
-TO authenticated
-WITH CHECK (
-  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
-  AND (
-    public.is_admin_user() 
-    OR EXISTS (
-      SELECT 1 FROM public.profiles 
-      WHERE profiles.id::text = auth.uid()::text 
-        AND profiles.role IN ('admin', 'superadmin')
-    )
-  )
-);
-
--- POLÍTICA 3: ATUALIZAÇÃO (UPDATE)
--- Apenas administradores ou superadministradores autenticados podem alterar arquivos existentes.
-CREATE POLICY "Admin Update Image Buckets"
-ON storage.objects FOR UPDATE
-TO authenticated
-USING (
-  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
-  AND (
-    public.is_admin_user() 
-    OR EXISTS (
-      SELECT 1 FROM public.profiles 
-      WHERE profiles.id::text = auth.uid()::text 
-        AND profiles.role IN ('admin', 'superadmin')
-    )
-  )
-)
-WITH CHECK (
-  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
-  AND (
-    public.is_admin_user() 
-    OR EXISTS (
-      SELECT 1 FROM public.profiles 
-      WHERE profiles.id::text = auth.uid()::text 
-        AND profiles.role IN ('admin', 'superadmin')
-    )
-  )
-);
-
--- POLÍTICA 4: EXCLUSÃO (DELETE)
--- Apenas administradores ou superadministradores autenticados podem deletar imagens dos buckets.
-CREATE POLICY "Admin Delete Image Buckets"
-ON storage.objects FOR DELETE
-TO authenticated
-USING (
-  bucket_id IN ('product-images', 'category-images', 'restaurant-images')
-  AND (
-    public.is_admin_user() 
-    OR EXISTS (
-      SELECT 1 FROM public.profiles 
-      WHERE profiles.id::text = auth.uid()::text 
-        AND profiles.role IN ('admin', 'superadmin')
-    )
-  )
-);
+-- NOTA DE ARQUITETURA DE SEGURANÇA:
+-- NENHUMA política de INSERT, UPDATE ou DELETE para "public" ou "anon" é criada.
+-- Todas as operações administrativas de upload e substituição de fotos são realizadas
+-- exclusivamente pelo backend seguro (server.ts) autenticado com a chave privilegiada
+-- SUPABASE_SERVICE_ROLE_KEY, que possui permissão nativa de bypass de RLS no PostgreSQL.
+-- Isso impede que qualquer usuário anônimo ou cliente externo envie ou apague arquivos.

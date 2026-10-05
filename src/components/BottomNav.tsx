@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../utils';
 
 export default function BottomNav() {
-  const { activeView, setActiveView, orders } = useApp();
+  const { activeView, setActiveView, orders, setHasEnteredDelivery } = useApp();
   const { totalItems } = useCart();
   const { profile } = useAuth();
 
@@ -27,7 +27,7 @@ export default function BottomNav() {
 
   return (
     <nav 
-      className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200/80 bg-white/95 backdrop-blur-xl pb-safe shadow-[0_-4px_25px_rgba(0,0,0,0.08)] transition-all"
+      className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200/90 bg-white/98 backdrop-blur-xl pb-safe shadow-[0_-4px_25px_rgba(0,0,0,0.12)] transition-all"
       aria-label="Navegação principal"
     >
       <div className="mx-auto flex h-16 max-w-lg items-center justify-around px-2">
@@ -40,8 +40,11 @@ export default function BottomNav() {
             <button
               key={view}
               id={`nav-btn-${view}`}
-              onClick={() => setActiveView(view)}
-              className="relative flex flex-col items-center justify-center w-16 h-full transition-all active:scale-95"
+              onClick={() => {
+                setHasEnteredDelivery(true);
+                setActiveView(view);
+              }}
+              className="relative flex flex-col items-center justify-center w-16 h-full transition-all active:scale-95 cursor-pointer"
             >
               <div
                 className={cn(
