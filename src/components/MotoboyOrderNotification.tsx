@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { Order } from '../types';
+import { formatPrice } from '../utils';
 import { Bike, MapPin, ArrowRight, X, Bell } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function MotoboyOrderNotification() {
   const { user, profile, updateProfile } = useAuth();
-  const { orders, updateOrder, setActiveView } = useApp();
+  const { orders, updateOrder, setActiveView, settings } = useApp();
   
   const [dismissedOrderIds, setDismissedOrderIds] = useState<string[]>([]);
   const [activeNotificationOrder, setActiveNotificationOrder] = useState<Order | null>(null);
@@ -140,11 +141,20 @@ export default function MotoboyOrderNotification() {
         await updateProfile({ online: true, ultimaAtualizacao: new Date().toISOString() });
       }
 
-      // 2. Assign motoboy and mark delivery status as 'aceito'
-      await updateOrder(activeNotificationOrder.id, {
+      // 2. Assign motoboy and mark delivery status as 'aceito' with frozen motoboyDeliveryFee
+      const hasExistingFee = typeof activeNotificationOrder.motoboyDeliveryFee === 'number' && !isNaN(activeNotificationOrder.motoboyDeliveryFee) && activeNotificationOrder.motoboyDeliveryFee >= 0;
+      const motoboyFee = hasExistingFee
+        ? activeNotificationOrder.motoboyDeliveryFee
+        : (typeof settings?.motoboyDeliveryFee === 'number' && !isNaN(settings.motoboyDeliveryFee) && settings.motoboyDeliveryFee >= 0 ? settings.motoboyDeliveryFee : undefined);
+
+      const orderUpdates: Partial<Order> = {
         motoboyId: user.uid,
         statusEntrega: 'aceito'
-      });
+      };
+      if (motoboyFee !== undefined) {
+        orderUpdates.motoboyDeliveryFee = motoboyFee;
+      }
+      await updateOrder(activeNotificationOrder.id, orderUpdates);
 
       // 3. Switch to Motoboy view
       setActiveView('motoboy');
@@ -180,9 +190,20 @@ export default function MotoboyOrderNotification() {
                 </span>
               </div>
               <div>
-                <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-orange-700">
-                  🔔 PEDIDO PRONTO!
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-orange-700">
+                    🔔 PEDIDO PRONTO!
+                  </span>
+                  {(typeof activeNotificationOrder.motoboyDeliveryFee === 'number' && !isNaN(activeNotificationOrder.motoboyDeliveryFee) && activeNotificationOrder.motoboyDeliveryFee >= 0) ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
+                      Ganho: {formatPrice(activeNotificationOrder.motoboyDeliveryFee)}
+                    </span>
+                  ) : (typeof settings?.motoboyDeliveryFee === 'number' && !isNaN(settings.motoboyDeliveryFee) && settings.motoboyDeliveryFee >= 0) ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
+                      Ganho: {formatPrice(settings.motoboyDeliveryFee)}
+                    </span>
+                  ) : null}
+                </div>
                 <h3 className="text-lg font-black text-gray-900 leading-tight mt-0.5">
                   Pedido #{activeNotificationOrder.id}
                 </h3>

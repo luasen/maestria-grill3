@@ -87,6 +87,7 @@ export interface Order {
 
   // New Motoboy Phase 2 Fields
   motoboyId?: string;
+  motoboyDeliveryFee?: number; // Snapshot congelado da remuneração devida ao motoboy por esta entrega
   statusEntrega?: 'aceito' | 'retirado' | 'a_caminho' | 'entregue';
   horarioEntrega?: string;
   motivoRecusa?: string;
@@ -165,6 +166,7 @@ export interface RestaurantSettings {
   promoBannerEnd?: string;
 
   // 6. Configurações dos Motoboys
+  motoboyDeliveryFee?: number; // Remuneração por entrega paga ao motoboy (definida pelo restaurante)
   motoboyDistribution?: 'manual' | 'automatic';
   motoboyMaxSimultaneousOrders?: number;
   motoboyMaxAcceptTime?: number;

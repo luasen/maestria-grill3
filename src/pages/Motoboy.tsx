@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useApp } from '../contexts/AppContext';
 import { formatPrice } from '../utils';
+import { Order } from '../types';
 import { 
   Bike, 
   MapPin, 
@@ -31,7 +32,7 @@ import { ConfirmationModal } from '../components/ConfirmationModal';
 
 export default function Motoboy() {
   const { user, profile, updateProfile, setIsAuthOpen } = useAuth();
-  const { orders, updateOrder } = useApp();
+  const { orders, updateOrder, settings } = useApp();
   const [activeTab, setActiveTab] = useState<'available' | 'active' | 'history'>('available');
   const [isUpdating, setIsUpdating] = useState(false);
   const [selectedChatOrder, setSelectedChatOrder] = useState<any | null>(null);
@@ -148,10 +149,18 @@ export default function Motoboy() {
         if (!profile.online) {
           await updateProfile({ online: true, ultimaAtualizacao: new Date().toISOString() });
         }
-        await updateOrder(orderId, {
+        const hasExistingFee = typeof currentOrder?.motoboyDeliveryFee === 'number' && !isNaN(currentOrder.motoboyDeliveryFee) && currentOrder.motoboyDeliveryFee >= 0;
+        const motoboyFee = hasExistingFee
+          ? currentOrder.motoboyDeliveryFee
+          : (typeof settings?.motoboyDeliveryFee === 'number' && !isNaN(settings.motoboyDeliveryFee) && settings.motoboyDeliveryFee >= 0 ? settings.motoboyDeliveryFee : undefined);
+        const orderUpdates: Partial<Order> = {
           motoboyId: user.uid,
           statusEntrega: 'aceito'
-        });
+        };
+        if (motoboyFee !== undefined) {
+          orderUpdates.motoboyDeliveryFee = motoboyFee;
+        }
+        await updateOrder(orderId, orderUpdates);
         setActiveTab('active');
       } else if (actionType === 'pickup') {
         await updateOrder(orderId, {
@@ -363,12 +372,21 @@ export default function Motoboy() {
                       </div>
                     </div>
 
-                    {/* Footer Row: Price & Accept Button */}
+                    {/* Footer Row: Earnings & Accept Button */}
                     <div className="flex items-center justify-between border-t border-gray-50 pt-3 mt-1">
                       <div>
-                        <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total a Receber</span>
-                        <span className="text-base font-black text-gray-800 mt-0.5 block">
-                          {formatPrice(order.valorTotal || order.total)}
+                        <span className="block text-[9px] font-extrabold text-emerald-600 uppercase tracking-wider">Seu Ganho nesta Corrida</span>
+                        <span className="text-base font-black text-emerald-700 mt-0.5 block">
+                          {typeof order.motoboyDeliveryFee === 'number' && !isNaN(order.motoboyDeliveryFee) && order.motoboyDeliveryFee >= 0 ? (
+                            formatPrice(order.motoboyDeliveryFee)
+                          ) : (typeof settings?.motoboyDeliveryFee === 'number' && !isNaN(settings.motoboyDeliveryFee) && settings.motoboyDeliveryFee >= 0 ? (
+                            formatPrice(settings.motoboyDeliveryFee)
+                          ) : (
+                            <span className="text-xs text-amber-600 font-semibold italic">A definir</span>
+                          ))}
+                        </span>
+                        <span className="text-[9px] text-gray-400 font-medium block">
+                          Valor do Pedido: {formatPrice(order.valorTotal || order.total)}
                         </span>
                       </div>
 
@@ -564,14 +582,27 @@ export default function Motoboy() {
 
                     {/* Footer: Price & Direct Actions */}
                     <div className="flex flex-col gap-3 pt-1 border-t border-gray-50">
-                      <div className="flex items-center justify-between">
+                      <div className="grid grid-cols-2 gap-2 bg-gray-50/80 p-2.5 rounded-2xl border border-gray-100 mb-1">
                         <div>
-                          <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total do Pedido</span>
-                          <span className="text-base font-extrabold text-gray-800 block">
-                            {formatPrice(order.valorTotal || order.total)}
+                          <span className="block text-[9px] font-extrabold text-emerald-600 uppercase tracking-wider">Seu Ganho</span>
+                          <span className="text-sm font-black text-emerald-700 block mt-0.5">
+                            {typeof order.motoboyDeliveryFee === 'number' && !isNaN(order.motoboyDeliveryFee) && order.motoboyDeliveryFee >= 0 ? (
+                              formatPrice(order.motoboyDeliveryFee)
+                            ) : (
+                              <span className="text-xs text-gray-400 font-normal italic">Não registrado</span>
+                            )}
                           </span>
                         </div>
                         <div className="text-right">
+                          <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Total do Pedido</span>
+                          <span className="text-xs font-bold text-gray-700 block mt-0.5">
+                            {formatPrice(order.valorTotal || order.total)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
                           <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Status do Pagamento</span>
                           <span className="text-xs font-bold text-orange-600 uppercase mt-0.5 block">
                             {order.paymentStatus === 'paid' || order.statusPagamento === 'pago' ? (
@@ -716,51 +747,76 @@ export default function Motoboy() {
                   <div className="bg-gray-50 rounded-2xl p-3 border border-gray-100 text-center">
                     <span className="block text-[9px] font-bold text-gray-400 uppercase tracking-wider">Faturamento</span>
                     <span className="text-lg font-extrabold text-emerald-600 mt-0.5 block">
-                      {formatPrice(completedOrders.reduce((sum, o) => sum + (o.valorTotal || o.total), 0))}
+                      {formatPrice(
+                        completedOrders
+                          .filter((o) => typeof o.motoboyDeliveryFee === 'number' && !isNaN(o.motoboyDeliveryFee) && o.motoboyDeliveryFee >= 0)
+                          .reduce((sum, o) => sum + (o.motoboyDeliveryFee as number), 0)
+                      )}
                     </span>
+                    {completedOrders.some((o) => typeof o.motoboyDeliveryFee !== 'number' || isNaN(o.motoboyDeliveryFee) || o.motoboyDeliveryFee < 0) && (
+                      <span className="text-[9px] text-amber-600 font-medium block mt-0.5">
+                        * Apenas corridas com remuneração registrada
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex flex-col gap-3.5">
-                  {completedOrders.map((order) => (
-                    <div
-                      key={order.id}
-                      className="border-b border-gray-50 pb-3.5 last:border-b-0 last:pb-0 flex items-center justify-between gap-4"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-extrabold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
-                            {order.id}
-                          </span>
-                          <span className="text-[10px] text-emerald-600 font-bold uppercase flex items-center gap-0.5">
-                            <CheckCircle2 className="h-3 w-3" /> Entregue
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-xs text-gray-800 truncate mt-1">
-                          Cliente: {order.customerName}
-                        </h4>
-                        <span className="text-[10px] text-gray-400 font-medium block mt-0.5">
-                          Concluído às {order.horarioEntrega ? new Date(order.horarioEntrega).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Concluído'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-right">
-                          <span className="text-xs font-black text-gray-800 block">
-                            {formatPrice(order.valorTotal || order.total)}
-                          </span>
-                          <span className="text-[9px] font-medium text-gray-400">
-                            {order.paymentMethod === 'pix' ? 'Pix' : order.paymentMethod === 'card' ? 'Cartão' : 'Dinheiro'}
+                  {completedOrders.map((order) => {
+                    const hasValidFee = typeof order.motoboyDeliveryFee === 'number' && !isNaN(order.motoboyDeliveryFee) && order.motoboyDeliveryFee >= 0;
+                    return (
+                      <div
+                        key={order.id}
+                        className="border-b border-gray-50 pb-3.5 last:border-b-0 last:pb-0 flex items-center justify-between gap-4"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-extrabold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+                              {order.id}
+                            </span>
+                            <span className="text-[10px] text-emerald-600 font-bold uppercase flex items-center gap-0.5">
+                              <CheckCircle2 className="h-3 w-3" /> Entregue
+                            </span>
+                          </div>
+                          <h4 className="font-bold text-xs text-gray-800 truncate mt-1">
+                            Cliente: {order.customerName}
+                          </h4>
+                          <span className="text-[10px] text-gray-400 font-medium block mt-0.5">
+                            Concluído às {order.horarioEntrega ? new Date(order.horarioEntrega).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Concluído'}
                           </span>
                         </div>
-                        <ChatButtonWithBadge
-                          orderId={order.id}
-                          onClick={() => setSelectedChatOrder(order)}
-                          size="icon"
-                          variant="outline"
-                        />
+                        <div className="flex items-center gap-3 shrink-0">
+                          <div className="text-right">
+                            {hasValidFee ? (
+                              <>
+                                <span className="text-xs font-black text-emerald-600 block">
+                                  +{formatPrice(order.motoboyDeliveryFee!)}
+                                </span>
+                                <span className="text-[9px] font-medium text-gray-400">
+                                  Remuneração
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="inline-block text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md">
+                                  Não registrado
+                                </span>
+                                <span className="text-[8px] font-medium text-gray-400 block mt-0.5">
+                                  Histórico anterior
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          <ChatButtonWithBadge
+                            orderId={order.id}
+                            onClick={() => setSelectedChatOrder(order)}
+                            size="icon"
+                            variant="outline"
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

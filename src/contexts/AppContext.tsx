@@ -137,11 +137,17 @@ function mergeOrdersPreservingProgression(prevOrders: Order[], incomingOrders: O
     const finalRefundAmount = incoming.refundAmount || existing.refundAmount;
     const finalMotivoRecusa = incoming.motivoRecusa || existing.motivoRecusa;
 
+    // 5. Protect motoboyDeliveryFee snapshot (immutable once recorded)
+    const finalMotoboyDeliveryFee = (typeof existing.motoboyDeliveryFee === 'number' && !isNaN(existing.motoboyDeliveryFee) && existing.motoboyDeliveryFee >= 0)
+      ? existing.motoboyDeliveryFee
+      : (typeof incoming.motoboyDeliveryFee === 'number' && !isNaN(incoming.motoboyDeliveryFee) && incoming.motoboyDeliveryFee >= 0 ? incoming.motoboyDeliveryFee : undefined);
+
     return {
       ...incoming,
       status: finalStatus,
       statusEntrega: finalStatusEntrega,
       motoboyId: finalMotoboyId,
+      motoboyDeliveryFee: finalMotoboyDeliveryFee,
       refundStatus: finalRefundStatus,
       refundId: finalRefundId,
       refundedAt: finalRefundedAt,

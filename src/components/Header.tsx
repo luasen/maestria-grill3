@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, ChevronLeft, ShieldCheck, User, Bike, Search } from 'lucide-react';
+import { ShoppingBag, ChevronLeft, ShieldCheck, User, Bike } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useCart } from '../contexts/CartContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -85,27 +85,6 @@ export default function Header({ onBack, title, showBack = false }: HeaderProps)
               <ShieldCheck className="h-4 w-4 text-orange-600" />
               <span className="hidden sm:inline">Painel</span>
             </button>
-          )}
-
-          {/* Search Button on Home */}
-          {isHome && (
-            <motion.button
-              whileTap={{ scale: 0.95 }}
-              onClick={() => {
-                const searchEl = document.getElementById('home-search-input');
-                if (searchEl) {
-                  searchEl.focus();
-                  searchEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                } else {
-                  setActiveView('menu');
-                }
-              }}
-              id="btn-header-search"
-              className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white border border-orange-100/90 text-gray-600 hover:text-orange-600 hover:border-orange-300 shadow-sm transition"
-              title="Buscar no cardápio"
-            >
-              <Search className="h-4.5 w-4.5" />
-            </motion.button>
           )}
 
           {/* Cart Button */}

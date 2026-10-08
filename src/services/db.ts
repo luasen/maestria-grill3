@@ -190,6 +190,7 @@ const DEFAULT_SETTINGS: RestaurantSettings = {
   promoBannerStart: '',
   promoBannerEnd: '',
 
+  motoboyDeliveryFee: 7.00,
   motoboyDistribution: 'automatic',
   motoboyMaxSimultaneousOrders: 3,
   motoboyMaxAcceptTime: 60,
@@ -527,6 +528,19 @@ export const dbService = {
               cupom: o.cupom,
               desconto: o.desconto ? Number(o.desconto) : undefined,
               motoboyId: o.motoboy_id || localOrder?.motoboyId,
+              motoboyDeliveryFee: (() => {
+                const parsedEndereco = typeof rawEndereco === 'string'
+                  ? (() => { try { return JSON.parse(rawEndereco); } catch { return null; } })()
+                  : rawEndereco;
+                const rawFee = o.motoboy_delivery_fee !== undefined
+                  ? o.motoboy_delivery_fee
+                  : (typeof parsedEndereco === 'object' && parsedEndereco !== null && parsedEndereco.motoboyDeliveryFee !== undefined
+                      ? parsedEndereco.motoboyDeliveryFee
+                      : localOrder?.motoboyDeliveryFee);
+                if (rawFee === undefined || rawFee === null) return undefined;
+                const num = Number(rawFee);
+                return (!isNaN(num) && num >= 0) ? num : undefined;
+              })(),
               mercadopagoPaymentId: o.mercadopago_payment_id,
               mercadopagoStatus: o.mercadopago_status,
               motivoRecusa: o.motivo_recusa || (typeof rawEndereco === 'object' && rawEndereco !== null ? rawEndereco.motivoRecusa : undefined) || localOrder?.motivoRecusa,
@@ -554,9 +568,25 @@ export const dbService = {
 
   async createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'status'> & { status?: Order['status'] }): Promise<Order> {
     const id = `PED-${Math.floor(100000 + Math.random() * 900000)}`;
+
+    const currentSettings = getLocalItem<RestaurantSettings>(LOCAL_STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    const configuredFee = (typeof currentSettings.motoboyDeliveryFee === 'number' && !isNaN(currentSettings.motoboyDeliveryFee) && currentSettings.motoboyDeliveryFee >= 0)
+      ? currentSettings.motoboyDeliveryFee
+      : (DEFAULT_SETTINGS.motoboyDeliveryFee ?? 7.00);
+
+    const frozenMotoboyFee = (typeof orderData.motoboyDeliveryFee === 'number' && !isNaN(orderData.motoboyDeliveryFee) && orderData.motoboyDeliveryFee >= 0)
+      ? orderData.motoboyDeliveryFee
+      : configuredFee;
+
+    const finalEndereco: any = typeof orderData.endereco === 'object' && orderData.endereco !== null
+      ? { ...orderData.endereco, motoboyDeliveryFee: frozenMotoboyFee }
+      : { addressText: orderData.endereco || '', motoboyDeliveryFee: frozenMotoboyFee };
+
     const newOrder: Order = {
       ...orderData,
       id,
+      motoboyDeliveryFee: frozenMotoboyFee,
+      endereco: finalEndereco,
       status: orderData.status || 'pending',
       createdAt: new Date().toISOString(),
     };
@@ -603,8 +633,6 @@ export const dbService = {
   },
 
   async updateOrderStatus(id: string, status: Order['status']): Promise<Order> {
-    const current = getLocalItem<Order[]>(LOCAL_STORAGE_KEYS.ORDERS, []);
-    const existing = current.find(o => o.id === id);
     const updates: Partial<Order> = { status };
     if (status === 'delivered') {
       updates.paymentStatus = 'paid';
@@ -612,27 +640,7 @@ export const dbService = {
       updates.statusEntrega = 'entregue';
       updates.paidAt = new Date().toISOString();
     }
-    const updatedOrder: Order = existing ? { ...existing, ...updates } : ({ id, status, createdAt: new Date().toISOString() } as any);
-    if (updates.statusEntrega && typeof updatedOrder.endereco === 'object' && updatedOrder.endereco !== null) {
-      updatedOrder.endereco = { ...updatedOrder.endereco, statusEntrega: updates.statusEntrega };
-    }
-    setLocalItem(LOCAL_STORAGE_KEYS.ORDERS, current.map(o => o.id === id ? updatedOrder : o));
-
-    if (isSupabaseConfigured) {
-      try {
-        const sbUpdates: any = { status };
-        if (status === 'delivered') {
-          sbUpdates.payment_status = 'paid';
-          if (updatedOrder.endereco) {
-            sbUpdates.endereco = updatedOrder.endereco;
-          }
-        }
-        await supabase.from('orders').update(sbUpdates).eq('id', id);
-      } catch (err) {
-        console.warn('Error updating order status in Supabase:', err);
-      }
-    }
-    return updatedOrder;
+    return this.updateOrder(id, updates);
   },
 
   async updateOrder(id: string, updatedFields: Partial<Order>): Promise<Order> {
@@ -647,30 +655,52 @@ export const dbService = {
 
     const current = getLocalItem<Order[]>(LOCAL_STORAGE_KEYS.ORDERS, []);
     const existing = current.find(o => o.id === id);
-    const updatedOrder: Order = existing ? { ...existing, ...fields } : ({ id, ...fields, createdAt: new Date().toISOString() } as any);
 
-    // Persist statusEntrega, refund metadata, and motivoRecusa into endereco JSONB (guaranteed to exist in PostgreSQL)
-    if (
-      fields.statusEntrega !== undefined ||
-      fields.refundStatus !== undefined ||
-      fields.refundId !== undefined ||
-      fields.refundedAt !== undefined ||
-      fields.refundError !== undefined ||
-      fields.refundAmount !== undefined ||
-      fields.motivoRecusa !== undefined
-    ) {
-      const currentEndereco = typeof updatedOrder.endereco === 'object' && updatedOrder.endereco !== null ? updatedOrder.endereco : {};
-      updatedOrder.endereco = {
-        ...currentEndereco,
-        ...(fields.statusEntrega !== undefined ? { statusEntrega: fields.statusEntrega } : {}),
-        ...(fields.refundStatus !== undefined ? { refundStatus: fields.refundStatus } : {}),
-        ...(fields.refundId !== undefined ? { refundId: fields.refundId } : {}),
-        ...(fields.refundedAt !== undefined ? { refundedAt: fields.refundedAt } : {}),
-        ...(fields.refundError !== undefined ? { refundError: fields.refundError } : {}),
-        ...(fields.refundAmount !== undefined ? { refundAmount: fields.refundAmount } : {}),
-        ...(fields.motivoRecusa !== undefined ? { motivoRecusa: fields.motivoRecusa } : {}),
-      } as any;
+    // Resolve frozen motoboyDeliveryFee:
+    // Rule: NEVER override an existing valid snapshot!
+    // Rule: NEVER invent or auto-inject current settings into legacy orders without a fee!
+    const existingFee = (() => {
+      const eFee = existing?.motoboyDeliveryFee !== undefined
+        ? existing.motoboyDeliveryFee
+        : (typeof existing?.endereco === 'object' && existing?.endereco !== null ? (existing.endereco as any).motoboyDeliveryFee : undefined);
+      if (eFee !== undefined && eFee !== null) {
+        const n = Number(eFee);
+        if (!isNaN(n) && n >= 0) return n;
+      }
+      return undefined;
+    })();
+
+    let finalMotoboyFee: number | undefined = existingFee;
+    if (fields.motoboyDeliveryFee !== undefined) {
+      const n = Number(fields.motoboyDeliveryFee);
+      if (!isNaN(n) && n >= 0) {
+        // Only accept if no existing fee was already frozen
+        if (existingFee === undefined) {
+          finalMotoboyFee = n;
+        }
+      }
     }
+    // Notice: If existingFee is undefined and fields.motoboyDeliveryFee is not provided,
+    // finalMotoboyFee remains undefined to prevent altering legacy orders.
+
+    const updatedOrder: Order = existing ? { ...existing, ...fields } : ({ id, ...fields, createdAt: new Date().toISOString() } as any);
+    if (finalMotoboyFee !== undefined) {
+      updatedOrder.motoboyDeliveryFee = finalMotoboyFee;
+    }
+
+    // Persist statusEntrega, motoboyDeliveryFee, refund metadata, and motivoRecusa into endereco JSONB (guaranteed to exist in PostgreSQL)
+    const currentEndereco = typeof updatedOrder.endereco === 'object' && updatedOrder.endereco !== null ? updatedOrder.endereco : {};
+    updatedOrder.endereco = {
+      ...currentEndereco,
+      ...(fields.statusEntrega !== undefined ? { statusEntrega: fields.statusEntrega } : {}),
+      ...(finalMotoboyFee !== undefined ? { motoboyDeliveryFee: finalMotoboyFee } : {}),
+      ...(fields.refundStatus !== undefined ? { refundStatus: fields.refundStatus } : {}),
+      ...(fields.refundId !== undefined ? { refundId: fields.refundId } : {}),
+      ...(fields.refundedAt !== undefined ? { refundedAt: fields.refundedAt } : {}),
+      ...(fields.refundError !== undefined ? { refundError: fields.refundError } : {}),
+      ...(fields.refundAmount !== undefined ? { refundAmount: fields.refundAmount } : {}),
+      ...(fields.motivoRecusa !== undefined ? { motivoRecusa: fields.motivoRecusa } : {}),
+    } as any;
 
     setLocalItem(LOCAL_STORAGE_KEYS.ORDERS, current.map(o => o.id === id ? updatedOrder : o));
 
@@ -720,6 +750,9 @@ export const dbService = {
             name: data.name || DEFAULT_SETTINGS.name,
             description: data.description || DEFAULT_SETTINGS.description,
             deliveryFee: Number(data.delivery_fee ?? DEFAULT_SETTINGS.deliveryFee),
+            motoboyDeliveryFee: (data.data && data.data.motoboyDeliveryFee !== undefined)
+              ? Number(data.data.motoboyDeliveryFee)
+              : (DEFAULT_SETTINGS.motoboyDeliveryFee ?? 7.00),
             phone: data.phone || DEFAULT_SETTINGS.phone,
             address: data.address || DEFAULT_SETTINGS.address,
             whatsapp: data.whatsapp || DEFAULT_SETTINGS.whatsapp,

@@ -2908,6 +2908,25 @@ export default function Admin() {
 
                     {expandedSection === 'motoboy' && (
                       <div className="p-4 border-t border-white/10 bg-white/10 flex flex-col gap-3.5">
+                        <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-3">
+                          <label className="block text-[10px] font-extrabold text-orange-950 uppercase mb-1 flex items-center justify-between">
+                            <span>Remuneração por Corrida (R$)</span>
+                            <span className="text-[9px] text-orange-700 font-normal">Valor pago ao motoboy por entrega</span>
+                          </label>
+                          <input
+                            type="number"
+                            step="0.50"
+                            min="0"
+                            value={sysSettings.motoboyDeliveryFee ?? 7}
+                            onChange={(e) => updateSysField('motoboyDeliveryFee', parseFloat(e.target.value) || 0)}
+                            placeholder="7.00"
+                            className="w-full rounded-xl border border-orange-200 bg-white py-2 px-3 text-xs font-bold text-gray-800 outline-none focus:border-orange-500 shadow-xs"
+                          />
+                          <p className="text-[10px] text-gray-500 mt-1">
+                            Este é o ganho fixo pago ao motoboy por cada entrega concluída. Este valor é independente do total do pedido ou do frete cobrado do cliente.
+                          </p>
+                        </div>
+
                         <div>
                           <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Distribuição de Pedidos</label>
                           <select
